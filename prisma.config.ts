@@ -1,3 +1,4 @@
+// Carrega o .env da raiz também nos comandos Prisma executados diretamente no Windows/Linux host.
 import "dotenv/config";
 import { defineConfig, env } from "prisma/config";
 

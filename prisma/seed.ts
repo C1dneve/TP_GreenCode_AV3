@@ -4,7 +4,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, type EstadoFisico, type StatusProcessamentoLote, type StatusRastreamento, type TipoEquipamento } from "../src/generated/prisma/client.js";
 import { getBootstrapAdminConfig } from "../src/config/bootstrap-admin.js";
 
-type SeedTransaction = Pick<PrismaClient, "organizacao" | "contrato" | "lote" | "equipamento" | "parametroGlobal" | "usuario">;
+type SeedTransaction = Pick<PrismaClient, "organizacao" | "contrato" | "lote" | "equipamento" | "parametroGlobal" | "usuario" | "historicoTriagem" | "falhaEquipamento" | "manutencaoEquipamento" | "historicoDepreciacao" | "referenciaRecuperacao" | "avaliacaoRecuperacao">;
 
 type DemoOrganization = {
   id: string;
@@ -413,16 +413,59 @@ async function ensureDemoData(tx: SeedTransaction): Promise<void> {
   }
 
   for (const data of DEMO_LOTS) {
-    const row = await tx.lote.upsert({ where: { id: data.id }, update: {}, create: data });
+    const row = await tx.lote.upsert({ where: { id: data.id }, update: { demonstracao: true }, create: { ...data, demonstracao: true } });
     if (row.organizacaoId !== data.organizacaoId || row.notaFiscal !== data.notaFiscal) {
       throw new Error("Colisão com identificador reservado de lote demonstrativo.");
     }
   }
 
   for (const data of DEMO_EQUIPMENT) {
-    const row = await tx.equipamento.upsert({ where: { id: data.id }, update: {}, create: data });
+    const row = await tx.equipamento.upsert({ where: { id: data.id }, update: { demonstracao: true }, create: { ...data, demonstracao: true } });
     if (row.codigoBarrasInterno !== data.codigoBarrasInterno) {
       throw new Error("Colisão com identificador reservado de equipamento demonstrativo.");
+    }
+  }
+}
+
+
+async function ensureDemoAnalyticsData(tx: SeedTransaction): Promise<void> {
+  const actor = await tx.usuario.findFirst({ where: { ativo: true }, orderBy: { createdAt: "asc" }, select: { id: true } });
+  const notebookId = DEMO_EQUIPMENT[3]!.id;
+  const printerId = DEMO_EQUIPMENT[4]!.id;
+  const monitorId = DEMO_EQUIPMENT[2]!.id;
+  const references = [
+    { id: "a2e00001-0000-4000-8000-000000000001", tipo: "NOTEBOOK" as const, marca: null, modelo: null, estadoFisico: "USADO_MODERADO" as const, valorMaterialPorKg: "9.5000", percentualRecuperavel: "65.0000", observacaoMetodologia: "Valor demonstrativo de materiais recuperáveis por kg, revisado pela equipe de triagem." },
+    { id: "a2e00001-0000-4000-8000-000000000002", tipo: "IMPRESSORA" as const, marca: null, modelo: null, estadoFisico: "DANIFICADO_LEVE" as const, valorMaterialPorKg: "3.0000", percentualRecuperavel: "45.0000", observacaoMetodologia: "Referência demonstrativa conservadora para materiais de impressora." },
+    { id: "a2e00001-0000-4000-8000-000000000003", tipo: "MONITOR" as const, marca: null, modelo: null, estadoFisico: "USADO_LEVE" as const, valorMaterialPorKg: "4.2000", percentualRecuperavel: "80.0000", observacaoMetodologia: "Referência demonstrativa para materiais recuperáveis de monitor." },
+    { id: "a2e00001-0000-4000-8000-000000000004", tipo: "NOTEBOOK" as const, marca: "ByteNorte", modelo: "Pro 14", estadoFisico: "USADO_MODERADO" as const, valorMaterialPorKg: "12.8000", percentualRecuperavel: "72.0000", observacaoMetodologia: "Referência demonstrativa específica de modelo, para validar a prioridade máxima de seleção." },
+  ];
+  for (const data of references) await (tx as any).referenciaRecuperacao.upsert({ where: { id: data.id }, update: { ...data, demonstracao: true, ativa: true }, create: { ...data, ativa: true, demonstracao: true } });
+
+  const depreciationRows = [
+    ["a2e00002-0000-4000-8000-000000000001", notebookId, new Date(Date.UTC(2023, 0, 15)), "2700.00", "15.0000", "USADO_MODERADO" as const],
+    ["a2e00002-0000-4000-8000-000000000002", notebookId, new Date(Date.UTC(2024, 0, 15)), "2200.00", "15.0000", "USADO_MODERADO" as const],
+    ["a2e00002-0000-4000-8000-000000000003", notebookId, new Date(Date.UTC(2025, 0, 15)), "1750.00", "15.0000", "USADO_MODERADO" as const],
+    ["a2e00002-0000-4000-8000-000000000004", printerId, new Date(Date.UTC(2023, 2, 1)), "420.00", "15.0000", "DANIFICADO_LEVE" as const],
+    ["a2e00002-0000-4000-8000-000000000005", printerId, new Date(Date.UTC(2024, 2, 1)), "340.00", "15.0000", "DANIFICADO_LEVE" as const],
+    ["a2e00002-0000-4000-8000-000000000006", printerId, new Date(Date.UTC(2025, 2, 1)), "260.00", "15.0000", "DANIFICADO_LEVE" as const],
+  ] as const;
+  for (const [id, equipamentoId, avaliadoEm, valorEstimado, taxaAnualPercentual, estadoFisico] of depreciationRows) await (tx as any).historicoDepreciacao.upsert({ where: { id }, update: {}, create: { id, equipamentoId, avaliadoEm, valorEstimado, taxaAnualPercentual, estadoFisico, metodo: "MASSA_DEMONSTRATIVA_AV3", demonstracao: true } });
+
+  await (tx as any).falhaEquipamento.upsert({ where: { id: "a2e00003-0000-4000-8000-000000000001" }, update: {}, create: { id: "a2e00003-0000-4000-8000-000000000001", equipamentoId: notebookId, ocorridoEm: new Date(Date.UTC(2024, 6, 3)), categoria: "ARMAZENAMENTO", severidade: "MEDIA", descricao: "Falha demonstrativa no dispositivo de armazenamento", resolvidaEm: new Date(Date.UTC(2024, 6, 5)), demonstracao: true } });
+  await (tx as any).falhaEquipamento.upsert({ where: { id: "a2e00003-0000-4000-8000-000000000002" }, update: {}, create: { id: "a2e00003-0000-4000-8000-000000000002", equipamentoId: printerId, ocorridoEm: new Date(Date.UTC(2025, 1, 10)), categoria: "ALIMENTACAO", severidade: "ALTA", descricao: "Falha demonstrativa no circuito de alimentação", demonstracao: true } });
+  await (tx as any).manutencaoEquipamento.upsert({ where: { id: "a2e00004-0000-4000-8000-000000000001" }, update: {}, create: { id: "a2e00004-0000-4000-8000-000000000001", equipamentoId: notebookId, realizadaEm: new Date(Date.UTC(2024, 6, 7)), tipo: "CORRETIVA", descricao: "Substituição demonstrativa do dispositivo de armazenamento", custo: "180.00", demonstracao: true } });
+  await (tx as any).manutencaoEquipamento.upsert({ where: { id: "a2e00004-0000-4000-8000-000000000002" }, update: {}, create: { id: "a2e00004-0000-4000-8000-000000000002", equipamentoId: printerId, realizadaEm: new Date(Date.UTC(2025, 1, 12)), tipo: "PREVENTIVA", descricao: "Limpeza e revisão demonstrativa do conjunto de alimentação", custo: "65.00", demonstracao: true } });
+  await (tx as any).avaliacaoRecuperacao.upsert({ where: { id: "a2e00005-0000-4000-8000-000000000001" }, update: {}, create: { id: "a2e00005-0000-4000-8000-000000000001", equipamentoId: monitorId, avaliadoEm: new Date(Date.UTC(2026, 0, 10)), valorEstimado: "10.75", valorRealizado: "9.20", metodo: "MASSA_DEMONSTRATIVA_AV3", quantidadeKg: "3.200", realizadoEm: new Date(Date.UTC(2026, 0, 20)), demonstracao: true } });
+
+  if (actor) {
+    const sessions = [
+      { id: "a2e00006-0000-4000-8000-000000000001", startId: "a2e00007-0000-4000-8000-000000000001", endId: "a2e00007-0000-4000-8000-000000000002", loteId: DEMO_LOTS[2]!.id, start: new Date(Date.now() - 12 * 86400000), end: new Date(Date.now() - 11 * 86400000) },
+      { id: "a2e00006-0000-4000-8000-000000000002", startId: "a2e00007-0000-4000-8000-000000000003", endId: "a2e00007-0000-4000-8000-000000000004", loteId: DEMO_LOTS[3]!.id, start: new Date(Date.now() - 20 * 86400000), end: new Date(Date.now() - 19 * 86400000) },
+      { id: "a2e00006-0000-4000-8000-000000000003", startId: "a2e00007-0000-4000-8000-000000000005", endId: null, loteId: DEMO_LOTS[1]!.id, start: new Date(Date.now() - 5 * 86400000), end: null },
+    ];
+    for (const session of sessions) {
+      await (tx as any).historicoTriagem.upsert({ where: { id: session.startId }, update: {}, create: { id: session.startId, sessaoId: session.id, loteId: session.loteId, responsavelId: actor.id, etapa: "TRIAGEM_INICIADA", ocorridoEm: session.start, observacao: "Evento de demonstração AV3", demonstracao: true } });
+      if (session.end && session.endId) await (tx as any).historicoTriagem.upsert({ where: { id: session.endId }, update: {}, create: { id: session.endId, sessaoId: session.id, loteId: session.loteId, responsavelId: actor.id, etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: session.end, observacao: "Conclusão de demonstração AV3", demonstracao: true } });
     }
   }
 }
@@ -466,6 +509,7 @@ async function main(): Promise<void> {
       }
 
       await ensureDemoData(tx);
+      await ensureDemoAnalyticsData(tx as SeedTransaction);
     });
 
     if (bootstrapAdmin) {
@@ -475,7 +519,7 @@ async function main(): Promise<void> {
         "Nenhum Administrador foi criado; configure as três variáveis BOOTSTRAP_ADMIN_* explicitamente para provisioná-lo.",
       );
     }
-    console.info("Dados demonstrativos de organizações, contratos, lotes e equipamentos verificados.");
+    console.info("Dados demonstrativos de organizações, contratos, lotes, equipamentos, triagem, falhas, manutenções, depreciação e recuperação verificados.");
   } finally {
     await prisma.$disconnect();
   }

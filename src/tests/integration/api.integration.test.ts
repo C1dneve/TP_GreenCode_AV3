@@ -68,11 +68,15 @@ after(async () => {
   try {
     if (readyForCleanup) {
       await prisma.eventoAuditoria.deleteMany({ where: { OR: [{ atorUsuarioId: actorId }, { entidadeId: { in: [organizationId, contractId, lotId, equipmentId].filter((x): x is string => Boolean(x)) } }] } });
+      if (lotId) await prisma.historicoTriagem.deleteMany({ where: { loteId: lotId } });
       if (equipmentId) await prisma.movimentacao.deleteMany({ where: { equipamentoId: equipmentId } });
       if (equipmentId) await prisma.equipamento.deleteMany({ where: { id: equipmentId } });
       if (lotId) await prisma.lote.deleteMany({ where: { id: lotId } });
       if (contractId) await prisma.contrato.deleteMany({ where: { id: contractId } });
-      if (organizationId) await prisma.organizacao.deleteMany({ where: { id: organizationId } });
+      if (organizationId) {
+        await prisma.execucaoAnalise.deleteMany({ where: { organizacaoId: organizationId } });
+        await prisma.organizacao.deleteMany({ where: { id: organizationId } });
+      }
       await prisma.usuario.deleteMany({ where: { id: actorId } });
     }
   } finally {
@@ -125,6 +129,22 @@ test("jornada HTTP real: organização → contrato → lote → equipamento →
   const triage = await app.inject({ method: "POST", url: `/api/v1/lotes/${lotId}/triagem`, headers: authorized(token), payload: { versaoEsperada: lot.json().versao } });
   assert.equal(triage.statusCode, 200, triage.body);
   assert.equal(triage.json().statusProcessamento, "TRIAGEM_CONCLUIDA");
+  const persistedTriage = await prisma!.historicoTriagem.findMany({ where: { loteId: lotId }, orderBy: { ocorridoEm: "asc" } });
+  assert.deepEqual(persistedTriage.map(event => event.etapa), ["TRIAGEM_INICIADA", "TRIAGEM_CONCLUIDA"]);
+  assert.equal(persistedTriage[0]?.sessaoId, persistedTriage[1]?.sessaoId);
+  assert.equal(persistedTriage[0]?.origemSessao, "LEGADO_AV2");
+  assert.equal(persistedTriage[1]?.origemSessao, "LEGADO_AV2");
+  assert.equal(persistedTriage[0]?.mensuravel, false);
+  assert.equal(persistedTriage[1]?.mensuravel, false);
+  assert.ok(persistedTriage[1]!.ocorridoEm >= persistedTriage[0]!.ocorridoEm);
+  const legacyAnalytics = await app!.inject({ method: "POST", url: "/api/v1/analytics/eficiencia-operacional", headers: authorized(token), payload: { organizacaoId: organizationId } });
+  assert.equal(legacyAnalytics.statusCode, 200, legacyAnalytics.body);
+  assert.equal(legacyAnalytics.json().sessoesLegadasSincronas, 1);
+  assert.equal(legacyAnalytics.json().sessoesMensuraveis, 0);
+  assert.equal(legacyAnalytics.json().tempoMedioMinutos, null, "triagem síncrona legada não pode contaminar a duração média");
+  const repeatedLegacyTriage = await app.inject({ method: "POST", url: `/api/v1/lotes/${lotId}/triagem`, headers: authorized(token), payload: { versaoEsperada: triage.json().versao } });
+  assert.equal(repeatedLegacyTriage.statusCode, 409, repeatedLegacyTriage.body);
+  assert.equal(await prisma!.historicoTriagem.count({ where: { loteId: lotId } }), 2, "a compatibilidade AV2 não pode criar nova sessão de triagem");
   const triagedEquipment = await app.inject({ method: "GET", url: `/api/v1/equipamentos/${equipmentId}`, headers: authorized(token) });
   assert.equal(triagedEquipment.statusCode, 200, triagedEquipment.body);
   assert.equal(triagedEquipment.json().statusRastreamento, "AGUARDANDO_DESMONTE");

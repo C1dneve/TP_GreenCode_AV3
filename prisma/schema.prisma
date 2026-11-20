@@ -57,6 +57,20 @@ enum StatusProcessamentoLote {
   FINALIZADO
 }
 
+enum StatusRelatorio {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+enum TipoAnalise {
+  EFICIENCIA_OPERACIONAL
+  RENTABILIDADE_EQUIPAMENTOS
+  VIDA_UTIL_REMANESCENTE
+}
+
 model Usuario {
   id                    String             @id @default(uuid()) @db.Uuid
   usuario               String             @unique @db.VarChar(80)
@@ -73,6 +87,8 @@ model Usuario {
   movimentacoes         Movimentacao[]
   auditorias            EventoAuditoria[]   @relation("AuditoriaAtor")
   parametrosAtualizados ParametroGlobal[]   @relation("ParametroAtualizadoPor")
+  triagensResponsavel  HistoricoTriagem[]    @relation("TriagemResponsavel")
+  relatoriosSolicitados RelatorioAssincrono[] @relation("RelatorioSolicitante")
 
   @@index([ativo, papel])
   @@map("usuarios")
@@ -107,6 +123,8 @@ model Organizacao {
   lotes              Lote[]
   parceiros          ParceiroOrganizacao[]
   auditorias         EventoAuditoria[]
+  analises           ExecucaoAnalise[]
+  relatorios         RelatorioAssincrono[]
 
   @@index([razaoSocial])
   @@index([ativo])
@@ -141,6 +159,7 @@ model Lote {
   transportadora     String                 @db.VarChar(120)
   statusProcessamento StatusProcessamentoLote @default(RECEBIDO)
   observacoes        String                 @default("") @db.VarChar(2000)
+  demonstracao       Boolean                @default(false)
   ativo              Boolean                @default(true)
   createdAt          DateTime               @default(now()) @db.Timestamptz(3)
   updatedAt          DateTime               @updatedAt @db.Timestamptz(3)
@@ -149,11 +168,13 @@ model Lote {
   equipamentos       Equipamento[]
   referenciasExternas ReferenciaExternaParceiro[]
   idempotencias       RequisicaoIdempotencia[]
+  historicoTriagem    HistoricoTriagem[]
   publicId           String                 @unique @default(dbgenerated("('gcl_'::text || replace(gen_random_uuid()::text, '-'::text, ''::text))")) @db.VarChar(40)
 
   @@index([organizacaoId, statusProcessamento])
   @@index([dataEntrada])
   @@index([ativo])
+  @@index([demonstracao, dataEntrada])
   @@map("lotes")
 }
 
@@ -171,17 +192,24 @@ model Equipamento {
   statusRastreamento StatusRastreamento  @default(AGUARDANDO_TRIAGEM)
   ativo              Boolean            @default(true)
   valorAquisicao     Decimal            @default(0) @db.Decimal(12, 2)
+  demonstracao       Boolean            @default(false)
   createdAt          DateTime           @default(now()) @db.Timestamptz(3)
   updatedAt          DateTime           @updatedAt @db.Timestamptz(3)
   versao             Int                @default(1)
   lote               Lote?              @relation(fields: [loteId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   movimentacoes      Movimentacao[]
+  historicoTriagem   HistoricoTriagem[]
+  falhas             FalhaEquipamento[]
+  manutencoes        ManutencaoEquipamento[]
+  depreciacoes       HistoricoDepreciacao[]
+  avaliacoesRecuperacao AvaliacaoRecuperacao[]
 
   // SQL migration owns the partial unique index: Prisma @@unique requires all
   // compound fields to be mandatory, but this approved relationship is optional.
   @@index([loteId, statusRastreamento])
   @@index([tipo, estadoFisico])
   @@index([ativo])
+  @@index([demonstracao, ativo])
   @@map("equipamentos")
 }
 
@@ -262,6 +290,7 @@ model Parceiro {
   idempotencias               RequisicaoIdempotencia[]
   referenciasExternas         ReferenciaExternaParceiro[]
   auditorias                  EventoAuditoria[]
+  relatorios                  RelatorioAssincrono[]
 
   @@index([ativo, nome])
   @@map("parceiros")
@@ -302,6 +331,7 @@ model ApiKey {
   updatedAt                   DateTime                @updatedAt @db.Timestamptz(3)
   parceiro                    Parceiro                @relation(fields: [parceiroId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   auditorias                  EventoAuditoria[]
+  relatorios                  RelatorioAssincrono[]
 
   @@index([parceiroId, createdAt])
   @@index([parceiroId, revogadaEm, expiraEm])
@@ -337,4 +367,192 @@ model ReferenciaExternaParceiro {
   @@unique([parceiroId, loteId])
   @@index([loteId])
   @@map("referencias_externas_parceiro")
+}
+
+
+model HistoricoTriagem {
+  id             String      @id @default(uuid()) @db.Uuid
+  sessaoId       String      @db.Uuid
+  loteId         String      @db.Uuid
+  equipamentoId  String?     @db.Uuid
+  responsavelId  String      @db.Uuid
+  etapa          String      @db.VarChar(30)
+  ocorridoEm     DateTime    @default(now()) @db.Timestamptz(3)
+  observacao     String?     @db.VarChar(2000)
+  demonstracao   Boolean     @default(false)
+  origemSessao   String      @default("AV3") @db.VarChar(24)
+  mensuravel     Boolean     @default(true)
+  lote           Lote        @relation(fields: [loteId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  equipamento    Equipamento? @relation(fields: [equipamentoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  responsavel    Usuario     @relation("TriagemResponsavel", fields: [responsavelId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  @@index([loteId, ocorridoEm])
+  @@index([sessaoId, etapa])
+  @@index([origemSessao, mensuravel, ocorridoEm])
+  @@index([responsavelId, ocorridoEm])
+  @@map("historico_triagem")
+}
+
+model FalhaEquipamento {
+  id             String      @id @default(uuid()) @db.Uuid
+  equipamentoId  String      @db.Uuid
+  ocorridoEm     DateTime    @default(now()) @db.Timestamptz(3)
+  categoria      String      @db.VarChar(80)
+  severidade     String      @db.VarChar(20)
+  descricao      String      @db.VarChar(2000)
+  resolvidaEm    DateTime?   @db.Timestamptz(3)
+  demonstracao   Boolean     @default(false)
+  createdAt      DateTime    @default(now()) @db.Timestamptz(3)
+  equipamento    Equipamento @relation(fields: [equipamentoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  @@index([equipamentoId, ocorridoEm])
+  @@index([severidade, ocorridoEm])
+  @@map("falhas_equipamentos")
+}
+
+model ManutencaoEquipamento {
+  id             String      @id @default(uuid()) @db.Uuid
+  equipamentoId  String      @db.Uuid
+  realizadaEm    DateTime    @default(now()) @db.Timestamptz(3)
+  tipo           String      @db.VarChar(40)
+  descricao      String      @db.VarChar(2000)
+  custo          Decimal?    @db.Decimal(12, 2)
+  demonstracao   Boolean     @default(false)
+  createdAt      DateTime    @default(now()) @db.Timestamptz(3)
+  equipamento    Equipamento @relation(fields: [equipamentoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  @@index([equipamentoId, realizadaEm])
+  @@map("manutencoes_equipamentos")
+}
+
+model HistoricoDepreciacao {
+  id                    String      @id @default(uuid()) @db.Uuid
+  equipamentoId         String      @db.Uuid
+  avaliadoEm            DateTime    @default(now()) @db.Timestamptz(3)
+  valorEstimado         Decimal     @db.Decimal(12, 2)
+  taxaAnualPercentual   Decimal?    @db.Decimal(7, 4)
+  estadoFisico          EstadoFisico
+  metodo                String      @db.VarChar(60)
+  demonstracao          Boolean     @default(false)
+  createdAt             DateTime    @default(now()) @db.Timestamptz(3)
+  equipamento           Equipamento @relation(fields: [equipamentoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  @@index([equipamentoId, avaliadoEm])
+  @@map("historico_depreciacao")
+}
+
+model ReferenciaRecuperacao {
+  id                       String          @id @default(uuid()) @db.Uuid
+  tipo                     TipoEquipamento
+  marca                    String?         @db.VarChar(100)
+  modelo                   String?         @db.VarChar(120)
+  estadoFisico             EstadoFisico
+  valorMaterialPorKg       Decimal         @db.Decimal(12, 4)
+  percentualRecuperavel    Decimal         @db.Decimal(7, 4)
+  observacaoMetodologia     String          @db.VarChar(1000)
+  demonstracao              Boolean         @default(false)
+  ativa                    Boolean         @default(true)
+  vigenciaInicio           DateTime        @default(now()) @db.Timestamptz(3)
+  vigenciaFim              DateTime?       @db.Timestamptz(3)
+  @@index([tipo, estadoFisico, ativa])
+  @@index([tipo, estadoFisico, marca, modelo, ativa])
+  @@index([demonstracao, ativa])
+  @@map("referencias_recuperacao")
+}
+
+model AvaliacaoRecuperacao {
+  id               String      @id @default(uuid()) @db.Uuid
+  equipamentoId    String      @db.Uuid
+  avaliadoEm       DateTime    @default(now()) @db.Timestamptz(3)
+  valorEstimado    Decimal     @db.Decimal(12, 2)
+  valorRealizado   Decimal?    @db.Decimal(12, 2)
+  metodo           String      @db.VarChar(80)
+  quantidadeKg     Decimal     @db.Decimal(10, 3)
+  demonstracao     Boolean     @default(false)
+  realizadoEm     DateTime?   @db.Timestamptz(3)
+  observacao       String?     @db.VarChar(1000)
+  equipamento      Equipamento @relation(fields: [equipamentoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  @@index([equipamentoId, avaliadoEm])
+  @@index([demonstracao, avaliadoEm])
+  @@map("avaliacoes_recuperacao")
+}
+
+model ExecucaoAnalise {
+  id              String       @id @default(uuid()) @db.Uuid
+  tipo            TipoAnalise
+  organizacaoId   String?      @db.Uuid
+  metodo          String       @db.VarChar(100)
+  versaoModelo    String       @db.VarChar(40)
+  filtros         Json
+  resultado       Json
+  observacoes     Int          @default(0)
+  confiabilidade  Decimal?     @db.Decimal(7, 4)
+  indisponivel    Boolean      @default(false)
+  motivo          String?      @db.VarChar(500)
+  demonstracao    Boolean      @default(false)
+  origemExecucao  String       @default("MANUAL") @db.VarChar(20)
+  schedulerId     String?      @db.VarChar(100)
+  jobId           String?      @db.VarChar(160)
+  chaveExecucao   String?      @unique @db.VarChar(260)
+  executadoEm     DateTime     @default(now()) @db.Timestamptz(3)
+  organizacao     Organizacao? @relation(fields: [organizacaoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  @@index([tipo, executadoEm])
+  @@index([origemExecucao, executadoEm])
+  @@index([organizacaoId, tipo, executadoEm])
+  @@map("execucoes_analise")
+}
+
+model RelatorioAssincrono {
+  id                   String          @id @default(uuid()) @db.Uuid
+  tipo                 String          @db.VarChar(60)
+  formato              String          @db.VarChar(10)
+  status               StatusRelatorio @default(PENDING)
+  solicitanteUsuarioId String?         @db.Uuid
+  parceiroId           String?         @db.Uuid
+  apiKeyId             String?         @db.Uuid
+  organizacaoId        String          @db.Uuid
+  filtros              Json
+  jobId                String          @unique @db.VarChar(100)
+  arquivoPath          String?         @db.VarChar(500)
+  arquivoSha256        String?         @db.Char(64)
+  tamanhoBytes         BigInt?
+  progresso            Int             @default(0)
+  mensagemErro         String?         @db.VarChar(1000)
+  requestId            String?         @db.VarChar(100)
+  criadoEm             DateTime        @default(now()) @db.Timestamptz(3)
+  iniciadoEm           DateTime?       @db.Timestamptz(3)
+  heartbeatEm           DateTime?       @db.Timestamptz(3)
+  leaseToken            String?         @db.VarChar(100)
+  concluidoEm          DateTime?       @db.Timestamptz(3)
+  expiraEm             DateTime        @db.Timestamptz(3)
+  solicitante          Usuario?        @relation("RelatorioSolicitante", fields: [solicitanteUsuarioId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  parceiro             Parceiro?      @relation(fields: [parceiroId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  apiKey               ApiKey?        @relation(fields: [apiKeyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  organizacao          Organizacao    @relation(fields: [organizacaoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  @@index([organizacaoId, criadoEm])
+  @@index([parceiroId, criadoEm])
+  @@index([status, expiraEm])
+  @@map("relatorios_assincronos")
+}
+
+model OutboxEvento {
+  id             String    @id @default(uuid()) @db.Uuid
+  agregado       String    @db.VarChar(80)
+  agregadoId     String    @db.VarChar(100)
+  evento         String    @db.VarChar(100)
+  payload        Json
+  criadoEm       DateTime  @default(now()) @db.Timestamptz(3)
+  publicadoEm    DateTime? @db.Timestamptz(3)
+  tentativas     Int       @default(0)
+  proximaTentativaEm DateTime? @db.Timestamptz(3)
+  ultimoErro     String?   @db.VarChar(1000)
+  @@index([publicadoEm, criadoEm])
+  @@index([agregado, agregadoId])
+  @@map("outbox_eventos")
+}
+
+model RateLimitBucket {
+  chave        String   @db.VarChar(160)
+  janelaInicio DateTime @db.Timestamptz(3)
+  quantidade   Int      @default(0)
+  expiraEm     DateTime @db.Timestamptz(3)
+  @@id([chave, janelaInicio])
+  @@index([expiraEm])
+  @@map("rate_limit_buckets")
 }

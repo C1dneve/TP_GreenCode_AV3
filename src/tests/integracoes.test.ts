@@ -30,7 +30,8 @@ test("escopos efetivos são a interseção entre parceiro e API Key", () => {
   assert.equal(hasScope(effective, "lotes:write"), false);
   assert.equal(hasScope(effective, "rastreabilidade:read"), true);
   assert.deepEqual(effectiveScopes(["lotes:write"], ["rastreabilidade:read"]), []);
-  assert.throws(() => normalizeScopes(["analytics:read"]), (error: unknown) => error instanceof Error);
+  assert.deepEqual(normalizeScopes(["analytics:read", "reports:write"]), ["analytics:read", "reports:write"]);
+  assert.throws(() => normalizeScopes(["scope-inexistente"]), (error: unknown) => error instanceof Error);
 });
 
 test("rate limiting aplica janela de 60 segundos e informa espera HTTP 429", () => {

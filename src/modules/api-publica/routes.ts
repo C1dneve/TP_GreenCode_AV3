@@ -88,12 +88,11 @@ const enforceRawPayloadLimit: preParsingHookHandler = (request, _reply, payload,
   done(null, payload.pipe(limiter));
 };
 
-function publicPreHandler(scope: IntegrationScope, limiter: InMemoryRateLimiter) {
+function publicPreHandler(scope: IntegrationScope, limiter: { consume: (key: string, limit: number) => Promise<import("../integracoes/rate-limiter.js").RateLimitResult> | import("../integracoes/rate-limiter.js").RateLimitResult }) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     const identity = request.integrationIdentity as IntegrationIdentity | undefined;
     if (!identity) throw errors.unauthorized("INVALID_API_KEY", "API Key não autenticada.");
-    const partnerResult = limiter.consume(`partner:${identity.parceiroId}`, identity.limiteParceiroPorMinuto);
-    const keyResult = limiter.consume(`key:${identity.apiKeyId}`, identity.limiteChavePorMinuto);
+    const [partnerResult, keyResult] = await Promise.all([limiter.consume(`partner:${identity.parceiroId}`, identity.limiteParceiroPorMinuto), limiter.consume(`key:${identity.apiKeyId}`, identity.limiteChavePorMinuto)]);
     const result = {
       allowed: partnerResult.allowed && keyResult.allowed,
       limit: identity.limiteRequisicoesPorMinuto,
@@ -118,7 +117,7 @@ export function registerApiPublicaRoutes(
   app: FastifyInstance,
   controller: ApiPublicaController,
   authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>,
-  limiter = new InMemoryRateLimiter(),
+  limiter: { consume: (key: string, limit: number) => Promise<import("../integracoes/rate-limiter.js").RateLimitResult> | import("../integracoes/rate-limiter.js").RateLimitResult } = new InMemoryRateLimiter(),
 ) {
   const submitPre = publicPreHandler("lotes:write", limiter);
   const readPre = publicPreHandler("rastreabilidade:read", limiter);

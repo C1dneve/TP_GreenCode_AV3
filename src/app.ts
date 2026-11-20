@@ -17,6 +17,10 @@ import { registerRelatoriosModule } from "./modules/relatorios/relatorios.module
 import { registerParametrosModule } from "./modules/parametros/parametros.module.js";
 import { registerParceirosModule } from "./modules/parceiros/parceiros.module.js";
 import { registerApiPublicaModule } from "./modules/api-publica/api-publica.module.js";
+import { registerAnalyticsModule } from "./modules/analytics/analytics.module.js";
+import { registerRelatoriosAsyncModule } from "./modules/relatorios-async/relatorios-async.module.js";
+import { registerTriagemModule } from "./modules/triagem/triagem.module.js";
+import { registerHistoricoEquipamentosModule } from "./modules/historico-equipamentos/historico.module.js";
 
 
 
@@ -55,7 +59,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       version: "0.2.0",
     },
       servers: [{ url: "http://localhost:3000" }],
-      tags: [{ name: "Health", description: "Estado técnico do serviço" }, { name: "Autenticação", description: "Login e gestão da sessão" }, { name: "Usuários", description: "Gerenciamento administrativo de usuários" }, { name: "Organizações", description: "Cadastro e histórico organizacional" }, { name: "Contratos", description: "Contratos e renovações" }, { name: "Lotes", description: "Ciclo operacional de lotes" }, { name: "Equipamentos", description: "Cadastro e rastreabilidade dos equipamentos" }, { name: "Movimentações", description: "Histórico de movimentações" }, { name: "Auditoria", description: "Trilha de auditoria" }, { name: "Relatórios", description: "Indicadores operacionais" }, { name: "Parâmetros", description: "Parâmetros globais" }, { name: "Parceiros", description: "Gestão administrativa de parceiros e organizações autorizadas" }, { name: "API Keys", description: "Ciclo de vida seguro das chaves de integração" }, { name: "API Pública", description: "Integração externa versionada com autenticação por API Key" }],
+      tags: [{ name: "Health", description: "Estado técnico do serviço" }, { name: "Autenticação", description: "Login e gestão da sessão" }, { name: "Usuários", description: "Gerenciamento administrativo de usuários" }, { name: "Organizações", description: "Cadastro e histórico organizacional" }, { name: "Contratos", description: "Contratos e renovações" }, { name: "Lotes", description: "Ciclo operacional de lotes" }, { name: "Equipamentos", description: "Cadastro e rastreabilidade dos equipamentos" }, { name: "Movimentações", description: "Histórico de movimentações" }, { name: "Auditoria", description: "Trilha de auditoria" }, { name: "Relatórios", description: "Indicadores operacionais" }, { name: "Parâmetros", description: "Parâmetros globais" }, { name: "Parceiros", description: "Gestão administrativa de parceiros e organizações autorizadas" }, { name: "API Keys", description: "Ciclo de vida seguro das chaves de integração" }, { name: "API Pública", description: "Integração externa versionada com autenticação por API Key" }, { name: "Analytics", description: "Indicadores operacionais, recuperação financeira e vida útil" }, { name: "Relatórios Assíncronos", description: "Solicitação, processamento e download protegido de relatórios" }],
       components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" }, apiKeyAuth: { type: "apiKey", in: "header", name: "X-API-Key", description: "Segredo de API Key exibido uma única vez na criação. O valor completo não pode ser recuperado." } }, schemas: { UsuarioPublico: { type: "object", additionalProperties: false, required: ["id", "usuario", "nome", "papel", "ativo"], properties: { id: { type: "string", format: "uuid" }, usuario: { type: "string" }, nome: { type: "string" }, papel: { type: "string", enum: ["ADMINISTRADOR", "OPERADOR_CADASTRO", "GESTOR_ALMOXARIFADO", "AUDITOR"] }, ativo: { type: "boolean" }, ultimoAcesso: { type: "string", format: "date-time", nullable: true }, createdAt: { type: "string", format: "date-time" }, updatedAt: { type: "string", format: "date-time" }, versao: { type: "integer" } } } } },
     },
   });
@@ -178,6 +182,10 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       registerParametrosModule(instance, options.prisma as PrismaClient);
       registerParceirosModule(instance, options.prisma as PrismaClient);
       registerApiPublicaModule(instance, options.prisma as PrismaClient);
+      registerAnalyticsModule(instance, options.prisma as PrismaClient);
+      registerRelatoriosAsyncModule(instance, options.prisma as PrismaClient);
+      registerTriagemModule(instance, options.prisma as PrismaClient);
+      registerHistoricoEquipamentosModule(instance, options.prisma as PrismaClient);
     });
   }
 

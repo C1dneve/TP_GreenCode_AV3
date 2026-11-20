@@ -1,69 +1,37 @@
 # GreenCode AV3
 
-O GreenCode apoia o controle da logística reversa de equipamentos eletrônicos. A AV3 amplia a API operacional com integração de organizações parceiras e prepara a plataforma para análises e relatórios preditivos. O primeiro incremento implementa a gestão de parceiros, API Keys, submissão pública de lotes e consulta de rastreabilidade.
+Plataforma de logística reversa de equipamentos eletrônicos. A AV3 preserva o monólito modular da AV2 e acrescenta integração pública por API Key, indicadores analíticos persistidos, histórico operacional dos equipamentos, triagem com timestamps explícitos e geração assíncrona de relatórios CSV/JSON.
 
-## Como executar
+## Stack e pré-requisitos
 
-A forma recomendada para avaliação é usar Docker Compose. Assim, não é necessário instalar Node.js ou PostgreSQL diretamente no computador para iniciar a API e executar os testes. No Windows, utilize Docker Desktop; no Ubuntu 24.04 ou superior, utilize Docker Engine com o plugin Docker Compose.
+- Node.js 24.x (o `package.json` restringe a versão a `>=24 <25`).
+- TypeScript, Fastify 5, Prisma ORM 7 e PostgreSQL 17.
+- Redis 7 e BullMQ 5 para filas e worker assíncrono.
+- Docker Desktop no Windows 10+ ou Docker Engine + Docker Compose no Ubuntu 24.04.03+.
 
-Abra um terminal na raiz do projeto, onde estão `Dockerfile` e `docker-compose.yml`. Os comandos `docker compose` abaixo funcionam no PowerShell e no Bash; somente a criação do `.env`, a geração do segredo JWT e as consultas HTTP variam conforme o terminal.
+As bibliotecas são gratuitas e de código aberto. O projeto mantém Fastify como servidor HTTP e não utiliza um segundo framework de backend.
 
-**A preparação completa, os testes manuais pelo Swagger e os testes automatizados estão no [Guia de execução e testes](docs/guia-de-testes-professor.md).**
+## Subida recomendada com Docker Compose
 
-### 1. Criar o arquivo `.env`
+Na raiz do projeto, copie `.env.example` para `.env` e configure credenciais próprias para o ambiente local. Nunca versione `.env` nem use os valores locais de exemplo em produção.
 
-**Windows (PowerShell):**
+**PowerShell:**
 
 ```powershell
 if (-not (Test-Path .\.env)) { Copy-Item .env.example .env }
 notepad .env
 ```
 
-**Ubuntu (Bash):**
+**Bash (Ubuntu):**
 
 ```bash
 if [ ! -f .env ]; then cp .env.example .env; fi
 nano .env
 ```
 
-Revise principalmente `POSTGRES_PASSWORD`, `JWT_SECRET`, `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_NAME` e `BOOTSTRAP_ADMIN_PASSWORD`. A senha inicial do administrador deve ter pelo menos 12 caracteres. Para simplificar a URL de conexão criada pelo Compose, use em `POSTGRES_PASSWORD` apenas letras, números e `_`.
+Configure no mínimo `POSTGRES_PASSWORD`, `JWT_SECRET` (32 bytes aleatórios ou mais), `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_NAME` e `BOOTSTRAP_ADMIN_PASSWORD` (12 caracteres ou mais). Para simplificar a URL de conexão montada pelo Compose, use letras, números e `_` em `POSTGRES_PASSWORD`.
 
-Os valores de `.env.example` são destinados somente a uma avaliação local isolada. Não os utilize em produção, não compartilhe o arquivo `.env` e não o versione. O Compose monta a `DATABASE_URL` internamente para os containers; não é necessário adicionar essa variável ao `.env` para o fluxo Docker.
-
-### 2. Gerar um segredo JWT aleatório
-
-Gere um segredo de pelo menos 32 bytes e grave-o na linha `JWT_SECRET` do `.env`.
-
-**Windows (PowerShell):**
-
-```powershell
-$bytes = New-Object byte[] 32
-$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
-$jwtSecret = ([BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant()
-$envLines = Get-Content .\.env
-if (-not ($envLines | Where-Object { $_ -match '^JWT_SECRET=' })) { throw 'A linha JWT_SECRET não foi encontrada no .env.' }
-$envLines = $envLines -replace '^JWT_SECRET=.*$', "JWT_SECRET=$jwtSecret"
-Set-Content -Path .\.env -Value $envLines -Encoding ascii
-Write-Host 'JWT_SECRET gerado e gravado no .env; o valor não foi exibido.'
-```
-
-**Ubuntu (Bash):**
-
-```bash
-set -eu
-secret="$(openssl rand -hex 32)"
-grep -q '^JWT_SECRET=' .env || { echo 'A linha JWT_SECRET não foi encontrada no .env.' >&2; exit 1; }
-sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${secret}/" .env
-unset secret
-echo 'JWT_SECRET gerado e gravado no .env; o valor não foi exibido.'
-```
-
-O comando do Ubuntu usa `openssl`. Se não estiver instalado, instale-o pelo gerenciador de pacotes da distribuição. Não copie o segredo para documentação, mensagens ou capturas de tela.
-
-### 3. Validar a configuração e iniciar
-
-Estes comandos são iguais no PowerShell e no Bash, a partir da raiz do projeto:
+Valide e inicie todos os serviços, incluindo PostgreSQL, Redis, API e worker:
 
 ```shell
 docker compose config -q
@@ -72,117 +40,169 @@ docker compose up --build -d
 docker compose ps
 ```
 
-A API depende do PostgreSQL saudável. Aguarde os serviços `postgres` e `api` ficarem `healthy`. Se aparecerem como `starting`, aguarde alguns segundos e execute `docker compose ps` novamente.
+O container da API aplica migrations (`npm run db:deploy`) e executa o seed idempotente na inicialização. O worker é um processo separado e consome as filas Redis. A API não depende da disponibilidade imediata do Redis para iniciar: solicitações são gravadas no PostgreSQL pela Outbox e ficam pendentes para publicação quando o worker/Redis voltar.
 
-**Windows (PowerShell):**
+A API fica disponível em `http://localhost:3000`; o Swagger em `http://localhost:3000/docs/` e o OpenAPI JSON em `http://localhost:3000/docs/json`.
+
+**PowerShell:**
 
 ```powershell
 Invoke-RestMethod http://localhost:3000/health
 ```
 
-**Ubuntu (Bash):**
+**Bash:**
 
 ```bash
 curl --fail --show-error http://localhost:3000/health
 ```
 
-A resposta esperada contém `status: ok` e `service: greencode-api`. Abra `http://localhost:3000/docs/` no navegador para acessar o Swagger ou `http://localhost:3000/docs/json` para consultar o contrato OpenAPI.
-
-### 4. Banco de dados, migrations e seed
-
-O container da API executa `npm run db:deploy` e `npm run db:seed` ao iniciar. O primeiro comando aplica as migrations versionadas; o segundo cria o administrador inicial quando ainda não existe e verifica os dados demonstrativos. Os dados demonstrativos incluem organizações, contratos, lotes e equipamentos utilizados também no roteiro manual.
-
-Para acompanhar a inicialização:
+Para acompanhar os processos:
 
 ```shell
-docker compose logs -f api
+docker compose logs -f api worker
 ```
 
-Para conferir manualmente a configuração Prisma e o estado das migrations, execute dentro do container da API:
+## Execução local sem Docker
+
+Para executar os comandos Prisma diretamente no Windows/Ubuntu host, o serviço PostgreSQL do Compose publica a porta `5432` somente em `127.0.0.1`. O `.env.example` já contém uma `DATABASE_URL` de exemplo compatível com essa publicação. Copie o arquivo para `.env` e mantenha a senha da URL igual a `POSTGRES_PASSWORD`:
+
+```dotenv
+POSTGRES_USER=greencode
+POSTGRES_PASSWORD=replace-with-a-local-database-password
+POSTGRES_DB=greencode
+DATABASE_URL=postgresql://greencode:replace-with-a-local-database-password@127.0.0.1:5432/greencode?schema=public
+REDIS_URL=redis://127.0.0.1:6379
+```
+
+O `prisma.config.ts` carrega `.env` automaticamente por `dotenv/config`. Assim, `npm run prisma:validate`, `npm run prisma:generate`, `npm run db:deploy` e `npm run db:seed` executados no host conectam à porta local publicada. Dentro dos containers, API e worker continuam usando o hostname interno `postgres:5432` definido explicitamente no Compose; não substitua esse hostname por `127.0.0.1` nos containers.
+
+A porta Redis `6379` também é publicada apenas em `127.0.0.1` para o worker quando executado fora do Docker. Com os serviços PostgreSQL/Redis iniciados e as variáveis `JWT_SECRET` e de bootstrap definidas no `.env`, execute:
 
 ```shell
-docker compose exec api npm run prisma:validate
-docker compose exec api npm run prisma:generate
-docker compose exec api npm run db:deploy
-docker compose exec api npm run db:seed
+# Primeira instalação após atualizar as dependências da AV3:
+npm install
+# Nas instalações seguintes, com package-lock.json já atualizado:
+# npm ci
+npm run prisma:validate
+npm run prisma:generate
+npm run db:deploy
+npm run db:seed
 ```
 
-O seed preserva registros existentes e não redefine a senha de um administrador que já tenha sido criado. Se o volume do banco já foi utilizado, alterar `BOOTSTRAP_ADMIN_PASSWORD` no `.env` não troca a senha de uma conta existente.
-
-### Credenciais iniciais
-
-Para acessar `POST /api/v1/auth/login` no Swagger, utilize os valores locais de `BOOTSTRAP_ADMIN_USERNAME` e `BOOTSTRAP_ADMIN_PASSWORD` configurados no `.env`. O administrador é criado pelo seed somente quando ainda não existe. Não publique essas credenciais nem as inclua em evidências compartilhadas.
-
-Para parar os containers sem apagar os dados:
+Em dois terminais separados, inicie a API e o worker:
 
 ```shell
-docker compose down
+npm run dev
+npm run dev:worker
 ```
 
-Somente para descartar os dados locais e começar do zero, execute:
+Para build/execução de produção:
 
 ```shell
-docker compose down -v
+npm run build
+npm run start
+npm run start:worker
 ```
 
-**Atenção:** `down -v` apaga os volumes PostgreSQL da aplicação e dos testes deste Compose. Não utilize esse comando se precisar preservar os registros locais.
+O worker lê `REDIS_URL` (padrão `redis://127.0.0.1:6379`), `REPORTS_DIR` (padrão `./storage/reports`), `REPORT_EXPIRATION_DAYS` (1 a 30 dias; padrão 7) e `WORKER_CONCURRENCY` (1 a 10; padrão 3). As análises recorrentes são configuradas por `ANALYTICS_EFFICIENCY_INTERVAL_MS` (padrão 3.600.000 ms), `ANALYTICS_PROFITABILITY_INTERVAL_MS` (padrão 21.600.000 ms) e `ANALYTICS_USEFUL_LIFE_INTERVAL_MS` (padrão 86.400.000 ms); cada intervalo deve ser inteiro de no mínimo 60.000 ms. Configure essas variáveis no `.env` local; o Compose injeta valores próprios para os containers. O worker aplica limpeza de arquivos expirados periodicamente e registra os três agendamentos com IDs estáveis por meio de `upsertJobScheduler` do BullMQ.
 
-## O que o sistema cobre
+## Funcionalidades AV3
 
-A AV3 mantém o fluxo operacional do GreenCode — organizações, contratos, lotes, equipamentos, movimentações, usuários, permissões, parâmetros, auditoria e relatórios básicos — e acrescenta integração externa.
+### API pública e parceiros
 
-No primeiro incremento, o Administrador gerencia parceiros, associações com organizações e API Keys. O parceiro autorizado pode submeter lote sem equipamentos ou lote acompanhado de equipamentos, além de consultar a rastreabilidade por identificador público GreenCode ou por sua referência externa. As permissões efetivas combinam os escopos do parceiro e da chave, e cada operação verifica o vínculo ativo com a organização.
+O administrador gerencia parceiros, vínculos com organizações e o ciclo de vida das API Keys. O segredo completo da API Key é mostrado apenas na criação; o banco armazena somente o hash. As permissões efetivas de cada chave são a interseção entre os escopos do parceiro e os da própria chave. Todas as operações públicas verificam a chave ativa e o vínculo ativo com a organização.
 
-A camada analítica, a previsão de vida útil, a estimativa de recuperação financeira, Redis/BullMQ, workers e relatórios assíncronos permanecem nas próximas fases; não devem ser considerados funcionalidades concluídas deste incremento.
-
-## API pública inicial
-
-| Operação | Método e rota | Autorização |
+| Operação | Método e rota | Escopo/controle |
 |---|---|---|
-| Submeter lote e equipamentos opcionais | `POST /api/v1/public/lotes` | `X-API-Key`, `X-Integration-ID`, `Idempotency-Key` e escopo `lotes:write` |
-| Consultar rastreabilidade por identificador GreenCode | `GET /api/v1/public/rastreabilidade/lotes/{identificadorPublico}` | `X-API-Key`, escopo `rastreabilidade:read` e vínculo ativo |
-| Consultar rastreabilidade por referência do parceiro | `GET /api/v1/public/rastreabilidade/external/{externalId}` | `X-API-Key`, escopo `rastreabilidade:read` e vínculo ativo |
-| Gerenciar parceiros, vínculos e chaves | Rotas `/api/v1/parceiros/...` | JWT de usuário interno com papel `ADMINISTRADOR` |
+| Submeter lote | `POST /api/v1/public/lotes` | `lotes:write`, `X-API-Key`, `X-Integration-ID`, `Idempotency-Key` |
+| Rastrear por identificador GreenCode | `GET /api/v1/public/rastreabilidade/lotes/{identificadorPublico}` | `rastreabilidade:read` e vínculo ativo |
+| Rastrear por referência do parceiro | `GET /api/v1/public/rastreabilidade/external/{externalId}` | `rastreabilidade:read` e vínculo ativo |
+| Executar análise | `POST /api/v1/public/analytics/{tipo}` | `analytics:write` e vínculo ativo |
+| Consultar análises | `GET /api/v1/public/analytics/{tipo}/historico` | `analytics:read` e vínculo ativo |
+| Solicitar relatório | `POST /api/v1/public/relatorios` | `reports:write` e vínculo ativo |
+| Listar/consultar relatório | `GET /api/v1/public/relatorios[/{id}]` | `reports:read` e vínculo ativo |
+| Baixar relatório | `GET /api/v1/public/relatorios/{id}/download` | `reports:read`, proprietário parceiro e vínculo ativo |
 
-A organização de destino é identificada pelo código público de integração enviado em `X-Integration-ID`; não envie ID interno nem CNPJ como identificador de integração. O Swagger descreve os schemas, headers, exemplos e códigos de resposta.
+Escopos disponíveis: `lotes:write`, `rastreabilidade:read`, `analytics:read`, `analytics:write`, `reports:read` e `reports:write`.
 
-## Documentação
+### Indicadores analíticos
 
-- [Visão, história e arquitetura do produto](docs/GreenCode-AV3.md)
-- [Requisitos e rastreabilidade](docs/requisitos-av3.md)
-- [Arquitetura da AV3](docs/arquitetura-av3.md)
-- [Modelo de dados](docs/modelo-de-dados-av3.md)
-- [Épicos e histórias de usuário](docs/epicos-e-user-stories-av3.md)
-- [Plano de implementação](docs/plano-de-implementacao-av3.md)
-- [Relatório técnico e evidências da entrega](docs/relatorio-tecnico-av3.md)
-- [Estrutura de pastas](docs/estrutura-de-pastas-av3.md)
-- [Guia de execução e testes](docs/guia-de-testes-professor.md)
-- [Registros de decisões arquiteturais (ADRs)](docs/adr/README.md)
+Os endpoints internos, protegidos por JWT e papel administrativo/auditor, são:
 
-## Testes automatizados
+- `POST /api/v1/analytics/eficiencia-operacional`
+- `POST /api/v1/analytics/rentabilidade`
+- `POST /api/v1/analytics/vida-util`
+- `GET /api/v1/analytics/{tipo}/historico`
 
-A validação manual pelo Swagger complementa, mas não substitui, os testes automatizados. O projeto possui testes unitários/HTTP e testes de integração com PostgreSQL. O Compose fornece um banco separado chamado `greencode_test`, evitando que a suíte de integração utilize o banco principal da aplicação.
+As análises persistem método, versão, filtros, resultado, quantidade de observações, confiabilidade quando aplicável e sinalização de dados demonstrativos em `execucoes_analise`. O histórico público filtra registros demonstrativos.
 
-### 1. Testes unitários e HTTP
+**Eficiência operacional:** usa os eventos persistidos `TRIAGEM_INICIADA` e `TRIAGEM_CONCLUIDA` da mesma sessão para calcular duração real. Apresenta média, mediana, percentis, mínimos/máximos, agregação por operador e organização, lotes pendentes e sessões incompletas.
+
+**Rentabilidade/recuperação:** a estimativa é `peso em kg × valor de referência por kg × percentual recuperável / 100`. A referência ativa por tipo, marca e condição física tem precedência; uma tabela-base conservadora é usada quando não há referência cadastrada. O valor efetivamente recuperado é armazenado separadamente e não é inferido.
+
+**Vida útil remanescente:** regressão linear OLS relaciona valor depreciado e idade em meses. Exige valor de aquisição positivo e, no mínimo, três avaliações em datas distintas. Falhas e manutenções ajustam a projeção; sem evidência suficiente, a previsão fica indisponível com motivo explícito. O R² e o índice de confiabilidade são medidas indicativas de aderência, não probabilidades de sobrevivência.
+
+### Triagem e histórico técnico
+
+- `POST /api/v1/lotes/{loteId}/triagem/iniciar`
+- `POST /api/v1/lotes/{loteId}/triagem/{sessaoId}/ocorrencias`
+- `POST /api/v1/lotes/{loteId}/triagem/{sessaoId}/concluir`
+- `GET /api/v1/lotes/{loteId}/triagem/historico`
+- Compatibilidade AV2 preservada: `POST /api/v1/lotes/{loteId}/triagem` executa a triagem síncrona e grava `TRIAGEM_INICIADA` e `TRIAGEM_CONCLUIDA` na mesma sessão histórica.
+
+Ambos os fluxos usam transações, controle de versão e rejeitam repetição ou transições inválidas. Cada etapa registra responsável e timestamp; a duração é derivada dos eventos persistidos. Para equipamentos também existem rotas de falhas, manutenções, avaliações periódicas de depreciação, estimativa/realização de recuperação e consulta agregada do histórico em `/api/v1/equipamentos/{equipamentoId}/historico-analitico`.
+
+Dados criados pelo seed para demonstrar esses indicadores são identificados por `demonstracao=true`. Os endpoints operacionais não permitem ao cliente ocultar dados reais marcando-os como demonstrativos.
+
+### Relatórios assíncronos
+
+Rotas internas (JWT + Administrador/Auditor):
+
+- `POST /api/v1/relatorios/async` — responde `202` com o identificador da solicitação.
+- `GET /api/v1/relatorios/async` e `GET /api/v1/relatorios/async/{id}` — histórico e estado.
+- `POST /api/v1/relatorios/async/{id}/reprocessar` — reprocessa uma execução com falha ainda dentro do prazo.
+- `GET /api/v1/relatorios/async/{id}/download` — download protegido.
+
+Tipos aceitos: `operacional`, `equipamentos`, `triagem`, `rentabilidade` e `vida-util`. Formatos: `CSV` e `JSON`. Os estados são `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED` e `EXPIRED`.
+
+A solicitação e o evento de Outbox são gravados na mesma transação PostgreSQL. Um worker separado publica o job no BullMQ, com `jobId` estável, cinco tentativas e backoff exponencial inicial de 3 segundos. O heartbeat persistido permite recuperar execuções interrompidas. Os arquivos ficam em volume persistente; metadados e hash SHA-256 ficam no banco. A expiração e a limpeza são controladas por `REPORT_EXPIRATION_DAYS`. O CSV escapa campos e neutraliza prefixos de fórmula de planilha.
+
+## Validação e testes
 
 ```shell
-docker compose --profile tests run --rm --no-deps test-runner npm test
+npm run prisma:validate
+npm run prisma:generate
+npm run build
+npm test
+npm run test:integration
 ```
 
-Esse comando executa o build TypeScript e a suíte `src/tests/*.test.ts`. A opção `--no-deps` evita iniciar o PostgreSQL de testes, que não é necessário para essa suíte.
-
-### 2. Testes de integração com PostgreSQL
+A suíte de integração deve utilizar exclusivamente o banco separado `greencode_test` definido no Compose. Para executá-la pelo Compose:
 
 ```shell
 docker compose --profile tests run --rm test-runner
 ```
 
-Esse comando inicia o serviço `postgres-test`, aplica as migrations, executa o seed e roda `npm run test:integration`. O banco usado é `greencode_test`, separado do banco da API. Os testes verificam o nome da base e recusam uma URL que não contenha `test` no nome. Os arquivos de integração são executados sequencialmente (`--test-concurrency=1`) porque compartilham esse banco dedicado e algumas operações usam transações serializáveis.
+O perfil `tests` inicia PostgreSQL e Redis de teste separados. Não altere `DATABASE_URL` dos testes para apontar ao banco principal.
 
-Não altere a URL dos testes para apontar ao banco principal ou a um banco de produção. Consulte o [Guia de execução e testes](docs/guia-de-testes-professor.md) para o roteiro manual de parceiro, API Key, submissão, idempotência, rastreabilidade e cenários negativos.
+## Compatibilidade e operação
 
-Os resultados de uma execução devem ser registrados com os números efetivamente exibidos no terminal. O registro técnico atualmente disponível informa cinco testes unitários focados aprovados, mas ainda não comprova o build completo, validação Prisma, migrations nem a suíte HTTP/PostgreSQL. Consulte [relatório técnico](docs/relatorio-tecnico-av3.md); não considere o incremento homologado até concluir as verificações pendentes.
+- **Windows 10 ou superior:** Docker Desktop com integração WSL2 é o caminho recomendado. Os exemplos de criação `.env` e health-check usam PowerShell.
+- **Ubuntu 24.04.03 ou superior:** Docker Engine e plugin Compose; os exemplos equivalentes usam Bash.
+- Os comandos `docker compose` e os scripts npm são os mesmos nos dois sistemas. Ao executar localmente sem Docker, use Node 24.x e Redis/PostgreSQL acessíveis; caminhos de `REPORTS_DIR` devem ser válidos no sistema operacional.
+- O armazenamento padrão dos relatórios é relativo ao diretório de execução. Em produção, configure um volume persistente e permissões restritas.
 
-## Tecnologias principais
+## Nota sobre a mensuração de triagem e consultas analíticas
 
-Node.js 24, TypeScript, Fastify 5, Prisma 7, PostgreSQL 17, JWT, API Keys e Swagger/OpenAPI. O código mantém o monólito modular e separa rotas/controllers, services, repositories e acesso ao banco nos módulos operacionais. Os módulos novos de integração possuem uma divergência de persistência registrada no relatório técnico para revisão arquitetural.
+O endpoint compatível da AV2 continua disponível, mas suas sessões são persistidas como `LEGADO_AV2`/não mensuráveis. Elas permanecem nas contagens operacionais, mas não entram no tempo médio/mediano. O fluxo AV3 explícito é mensurável com os timestamps de início e conclusão. Análises e relatórios recusam conjuntos acima de 20.000 registros com erro explícito, sem gerar saída parcial.
+
+As análises que incluem massa demonstrativa mantêm referências financeiras e históricos vinculados à mesma origem (`demonstracao`) do equipamento.
+
+## Documentação técnica
+
+- [Relatório técnico da AV3](docs/relatorio-tecnico-av3.md)
+- [Guia de execução e testes](docs/guia-de-testes-professor.md)
+- [Arquitetura da AV3](docs/arquitetura-av3.md)
+- [Modelo de dados](docs/modelo-de-dados-av3.md)
+- [Requisitos da AV3](docs/requisitos-av3.md)
+- [ADRs](docs/adr/README.md)

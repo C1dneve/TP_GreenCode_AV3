@@ -43,9 +43,7 @@ A redução de permissões do parceiro produz efeito imediatamente para todas as
 
 ## 4. Rate limiting e limites de submissão
 
-O limitador atual utiliza janela fixa de 60 segundos em memória do processo Fastify. Cada requisição consome contadores do parceiro e da chave; o menor limite é aplicado. O mesmo princípio vale para quantidade de equipamentos e tamanho do payload. Excesso de requisições retorna `429` e `Retry-After`; payload acima do limite retorna `413`.
-
-**Limitação:** os contadores não são persistidos nem compartilhados entre instâncias e reiniciam com o processo. Portanto, o limite não é distribuído. Antes de escalar horizontalmente será necessário adotar backend compartilhado, como Redis, e revisar a estratégia.
+O limitador usa janela fixa de 60 segundos persistida no PostgreSQL. Cada requisição consome contadores do parceiro e da chave; o menor limite efetivo é aplicado. Os buckets são atualizados atomicamente, compartilhados entre instâncias e expiram pela janela. Excesso de requisições retorna `429` e `Retry-After`; payload acima do limite retorna `413`. Redis/BullMQ é usado para as filas de relatórios e análises, não como fonte do contador HTTP.
 
 ## 5. Idempotência e concorrência
 
@@ -69,6 +67,8 @@ A consulta por `externalId` é contextualizada ao parceiro autenticado. A consul
 
 O Swagger documenta rotas internas, rotas administrativas e endpoints públicos. O esquema `apiKeyAuth` utiliza o header `X-API-Key`; a submissão também exige `X-Integration-ID` e `Idempotency-Key`. A interface está em `/docs/` e o contrato JSON em `/docs/json`.
 
-## 9. Próximas fases
+## 9. Módulos analíticos e processamento assíncrono AV3
 
-A camada analítica, previsões, Redis/BullMQ, workers, scheduler, retry de jobs, solicitação de relatórios, artefatos, expiração e webhooks permanecem fora deste incremento. As propostas futuras estão identificadas no plano e nos ADRs, sem serem apresentadas como funcionalidades implementadas.
+A camada analítica está separada em eficiência operacional, rentabilidade e vida útil remanescente. As execuções são persistidas no PostgreSQL com método, versão, filtros, resultado e identificação manual/agendada. O fluxo de triagem antigo e o fluxo explícito AV3 gravam `historico_triagem`; índices parciais garantem um início e uma conclusão por sessão.
+
+O worker separado consome `greencode-relatorios` e `greencode-analises`. A fila de análises registra schedulers com IDs estáveis via `upsertJobScheduler`; retries usam backoff exponencial. Relatórios usam Outbox, lease/heartbeat, armazenamento com checksum SHA-256, download autorizado e expiração. O PostgreSQL permanece como estado de negócio; Redis coordena entrega e agendamento.

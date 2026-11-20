@@ -6,10 +6,26 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-greencode}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}
       POSTGRES_DB: ${POSTGRES_DB:-greencode}
+    ports:
+      - "127.0.0.1:5433:5432"
     volumes:
       - greencode_pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - greencode_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 15
@@ -29,6 +45,10 @@ services:
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:?Configure BOOTSTRAP_ADMIN_USERNAME no arquivo .env}
       BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:?Configure BOOTSTRAP_ADMIN_NAME no arquivo .env}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Configure BOOTSTRAP_ADMIN_PASSWORD no arquivo .env}
+      REPORTS_DIR: /app/storage/reports
+      REPORT_EXPIRATION_DAYS: ${REPORT_EXPIRATION_DAYS:-7}
+    volumes:
+      - greencode_reports:/app/storage/reports
     ports:
       - "127.0.0.1:3000:3000"
     healthcheck:
@@ -37,6 +57,30 @@ services:
       timeout: 3s
       retries: 15
       start_period: 30s
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["npm", "run", "worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-greencode}:${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}@postgres:5432/${POSTGRES_DB:-greencode}?schema=public"
+      JWT_SECRET: ${JWT_SECRET:?Configure JWT_SECRET no arquivo .env}
+      REDIS_URL: redis://redis:6379
+      REPORTS_DIR: /app/storage/reports
+      REPORT_EXPIRATION_DAYS: ${REPORT_EXPIRATION_DAYS:-7}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-3}
+      ANALYTICS_WORKER_CONCURRENCY: ${ANALYTICS_WORKER_CONCURRENCY:-2}
+      ANALYTICS_EFFICIENCY_INTERVAL_MS: ${ANALYTICS_EFFICIENCY_INTERVAL_MS:-3600000}
+      ANALYTICS_PROFITABILITY_INTERVAL_MS: ${ANALYTICS_PROFITABILITY_INTERVAL_MS:-21600000}
+      ANALYTICS_USEFUL_LIFE_INTERVAL_MS: ${ANALYTICS_USEFUL_LIFE_INTERVAL_MS:-86400000}
+    volumes:
+      - greencode_reports:/app/storage/reports
 
   postgres-test:
     image: postgres:17-alpine
@@ -53,11 +97,23 @@ services:
       timeout: 3s
       retries: 15
 
+  redis-test:
+    image: redis:7-alpine
+    profiles: ["tests"]
+    command: ["redis-server", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
   test-runner:
     build: .
     profiles: ["tests"]
     depends_on:
       postgres-test:
+        condition: service_healthy
+      redis-test:
         condition: service_healthy
     environment:
       NODE_ENV: test
@@ -68,8 +124,12 @@ services:
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:?Configure BOOTSTRAP_ADMIN_USERNAME no arquivo .env}
       BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:?Configure BOOTSTRAP_ADMIN_NAME no arquivo .env}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Configure BOOTSTRAP_ADMIN_PASSWORD no arquivo .env}
+      REDIS_URL: redis://redis-test:6379
+      REPORTS_DIR: /app/storage/reports
     command: ["sh", "-c", "npm run db:deploy && npm run db:seed && npm run test:integration"]
 
 volumes:
   greencode_pgdata:
   greencode_test_pgdata:
+  greencode_redisdata:
+  greencode_reports:

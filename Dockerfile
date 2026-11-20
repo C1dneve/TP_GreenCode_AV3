@@ -6,7 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN npm ci
+# Reconcilia o lockfile com package.json e instala a árvore de dependências
+# antes de gerar o Prisma Client e compilar a aplicação.
+RUN npm install --package-lock-only --ignore-scripts --no-audit --no-fund && npm ci
 
 COPY prisma ./prisma
 COPY src ./src

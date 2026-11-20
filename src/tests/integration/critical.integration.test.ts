@@ -156,11 +156,15 @@ after(async () => {
         where: { OR: [{ atorUsuarioId: actorId }, { entidadeId: { in: allEntityIds } }] },
       });
       await prisma.tokenRevogado.deleteMany({ where: { usuarioId: actorId } });
+      if (lotIds.length) await prisma.historicoTriagem.deleteMany({ where: { loteId: { in: lotIds } } });
       if (equipmentIds.length) await prisma.movimentacao.deleteMany({ where: { equipamentoId: { in: equipmentIds } } });
       if (equipmentIds.length) await prisma.equipamento.deleteMany({ where: { id: { in: equipmentIds } } });
       if (lotIds.length) await prisma.lote.deleteMany({ where: { id: { in: lotIds } } });
       if (contractIds.length) await prisma.contrato.deleteMany({ where: { id: { in: contractIds } } });
-      if (organizationIds.length) await prisma.organizacao.deleteMany({ where: { id: { in: organizationIds } } });
+      if (organizationIds.length) {
+        await prisma.execucaoAnalise.deleteMany({ where: { organizacaoId: { in: organizationIds } } });
+        await prisma.organizacao.deleteMany({ where: { id: { in: organizationIds } } });
+      }
       if (userIds.length) {
       await prisma.usuario.deleteMany({
         where: { id: { in: userIds } },
@@ -636,6 +640,40 @@ test("falha controlada na auditoria reverte a triagem inteira e não persiste au
   }
 });
 
+
+test("fluxo explícito AV3 mantém histórico de início, ocorrência e conclusão e rejeita repetição", async () => {
+  assert.ok(app);
+  assert.ok(prisma);
+  const token = await login();
+  const fixture = await createEquipmentScenario(token);
+
+  const start = await app.inject({ method: "POST", url: `/api/v1/lotes/${fixture.lotId}/triagem/iniciar`, headers: authorized(token), payload: { observacao: "Início da triagem de integração" } });
+  assert.equal(start.statusCode, 201, start.body);
+  const sessionId = start.json().sessaoId as string;
+  assert.ok(sessionId);
+
+  const duplicateStart = await app.inject({ method: "POST", url: `/api/v1/lotes/${fixture.lotId}/triagem/iniciar`, headers: authorized(token), payload: {} });
+  assert.equal(duplicateStart.statusCode, 409, duplicateStart.body);
+
+  const occurrence = await app.inject({ method: "POST", url: `/api/v1/lotes/${fixture.lotId}/triagem/${sessionId}/ocorrencias`, headers: authorized(token), payload: { observacao: "Fonte de alimentação inspecionada" } });
+  assert.equal(occurrence.statusCode, 201, occurrence.body);
+
+  const complete = await app.inject({ method: "POST", url: `/api/v1/lotes/${fixture.lotId}/triagem/${sessionId}/concluir`, headers: authorized(token), payload: { observacao: "Triagem concluída sem ressalvas" } });
+  assert.equal(complete.statusCode, 200, complete.body);
+  assert.ok(complete.json().duracaoMs >= 0);
+
+  const duplicateComplete = await app.inject({ method: "POST", url: `/api/v1/lotes/${fixture.lotId}/triagem/${sessionId}/concluir`, headers: authorized(token), payload: {} });
+  assert.equal(duplicateComplete.statusCode, 409, duplicateComplete.body);
+
+  const history = await prisma.historicoTriagem.findMany({ where: { loteId: fixture.lotId, sessaoId: sessionId }, orderBy: { ocorridoEm: "asc" } });
+  assert.deepEqual(history.map(event => event.etapa), ["TRIAGEM_INICIADA", "OCORRENCIA", "TRIAGEM_CONCLUIDA"]);
+  assert.ok(history[2]!.ocorridoEm >= history[0]!.ocorridoEm);
+  assert.ok(history.every(event => event.origemSessao === "AV3" && event.mensuravel), "fluxo AV3 deve ser marcado como mensurável");
+  const analytics = await app.inject({ method: "POST", url: "/api/v1/analytics/eficiencia-operacional", headers: authorized(token), payload: { organizacaoId: fixture.organizationId } });
+  assert.equal(analytics.statusCode, 200, analytics.body);
+  assert.ok(analytics.json().sessoesMensuraveis >= 1);
+  assert.equal(analytics.json().sessoesLegadasSincronas, 0);
+});
 
 test("finalização prematura de lote retorna 409 e preserva o estado", async () => {
   assert.ok(app, "Fastify deveria estar inicializado");

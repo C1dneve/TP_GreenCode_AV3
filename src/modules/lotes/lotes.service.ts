@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Prisma } from "../../generated/prisma/client.js";
 import { errors, isPrismaCode } from "../../shared/domain-error.js";
 import { assertRole } from "../../shared/authorization.js";
@@ -32,7 +33,42 @@ export class LotesService {
   async triage(id: string, version: number, actorId: string, requestId: string, actorRole: string) {
     assertRole(actorRole, ["ADMINISTRADOR", "GESTOR_ALMOXARIFADO"]);
     requireExpectedVersion(version);
-    try { return await this.repo.transaction(async tx => { const lot = await tx.findById(id); if (!lot) throw errors.notFound("LOT_NOT_FOUND", "Lote não encontrado."); if (version !== lot.versao) throw errors.conflict("VERSION_CONFLICT", "Lote alterado por outra operação."); if (!lot.ativo) throw errors.conflict("LOT_INACTIVE", "Lote inativo não pode ser triado."); if (lot.statusProcessamento !== "RECEBIDO") throw errors.conflict("INVALID_STATE_TRANSITION", "Somente lote recebido pode iniciar triagem."); const allEquipment = await tx.equipmentCount(id); if (allEquipment === 0) throw errors.conflict("EMPTY_LOT", "Não é possível triar lote vazio."); const eligible = await tx.triageEligibleEquipment(id); const inactive = await tx.inactiveEquipmentCount(id); if (eligible.length !== allEquipment || inactive > 0) throw errors.conflict("EQUIPMENT_STATE_CONFLICT", "Todos os equipamentos do lote devem estar ativos e aguardando triagem."); const finished = await tx.updateVersioned(id, version, { statusProcessamento: "TRIAGEM_CONCLUIDA", versao: { increment: 1 } }); if (!finished) throw errors.conflict("VERSION_CONFLICT", "Lote alterado por outra operação."); for (const equipment of eligible) { if (!await tx.transitionEquipmentForTriage(id, equipment.id, equipment.versao)) throw errors.conflict("EQUIPMENT_STATE_CONFLICT", "Um equipamento foi alterado durante a triagem."); } const actor = await tx.findActorName(actorId); await tx.recordAudit({ atorUsuarioId: actorId, atorNomeSnapshot: actor?.nome, acao: "TRIAGEM_LOTE", entidade: "Lote", entidadeId: id, resultado: "SUCESSO", requestId }); return view(finished); }, true); } catch (e) { if (isPrismaCode(e, "P2034")) throw errors.conflict("CONCURRENT_MODIFICATION", "Triagem conflitou com outra operação."); throw e; }
+    try {
+      return await this.repo.transaction(async tx => {
+        const lot = await tx.findById(id);
+        if (!lot) throw errors.notFound("LOT_NOT_FOUND", "Lote não encontrado.");
+        if (version !== lot.versao) throw errors.conflict("VERSION_CONFLICT", "Lote alterado por outra operação.");
+        if (!lot.ativo) throw errors.conflict("LOT_INACTIVE", "Lote inativo não pode ser triado.");
+        if (lot.statusProcessamento !== "RECEBIDO") throw errors.conflict("INVALID_STATE_TRANSITION", "Somente lote recebido pode iniciar triagem.");
+        const allEquipment = await tx.equipmentCount(id);
+        if (allEquipment === 0) throw errors.conflict("EMPTY_LOT", "Não é possível triar lote vazio.");
+        const eligible = await tx.triageEligibleEquipment(id);
+        const inactive = await tx.inactiveEquipmentCount(id);
+        if (eligible.length !== allEquipment || inactive > 0) throw errors.conflict("EQUIPMENT_STATE_CONFLICT", "Todos os equipamentos do lote devem estar ativos e aguardando triagem.");
+
+        const sessaoId = randomUUID();
+        // Mantém o contrato síncrono legado, registrando os mesmos eventos
+        // persistentes consumidos pela análise operacional da AV3.
+        const started = await tx.updateVersioned(id, version, { statusProcessamento: "EM_TRIAGEM" });
+        if (!started) throw errors.conflict("VERSION_CONFLICT", "Lote alterado por outra operação.");
+        await tx.recordTriageEvent({ sessaoId, loteId: id, responsavelId: actorId, etapa: "TRIAGEM_INICIADA", demonstracao: Boolean(lot.demonstracao), observacao: "Início registrado pelo endpoint compatível da AV2.", origemSessao: "LEGADO_AV2", mensuravel: false });
+
+        for (const equipment of eligible) {
+          if (!await tx.transitionEquipmentForTriage(id, equipment.id, equipment.versao)) {
+            throw errors.conflict("EQUIPMENT_STATE_CONFLICT", "Um equipamento foi alterado durante a triagem.");
+          }
+        }
+        const finished = await tx.updateVersioned(id, version, { statusProcessamento: "TRIAGEM_CONCLUIDA", versao: { increment: 1 } });
+        if (!finished) throw errors.conflict("VERSION_CONFLICT", "Lote alterado por outra operação.");
+        await tx.recordTriageEvent({ sessaoId, loteId: id, responsavelId: actorId, etapa: "TRIAGEM_CONCLUIDA", demonstracao: Boolean(lot.demonstracao), observacao: "Conclusão registrada pelo endpoint compatível da AV2.", origemSessao: "LEGADO_AV2", mensuravel: false });
+        const actor = await tx.findActorName(actorId);
+        await tx.recordAudit({ atorUsuarioId: actorId, atorNomeSnapshot: actor?.nome, acao: "TRIAGEM_LOTE", entidade: "Lote", entidadeId: id, resultado: "SUCESSO", requestId, detalhes: { sessaoId, compatibilidade: "AV2", duracaoMensuravel: false } });
+        return view(finished);
+      }, true);
+    } catch (e) {
+      if (isPrismaCode(e, "P2034")) throw errors.conflict("CONCURRENT_MODIFICATION", "Triagem conflitou com outra operação.");
+      throw e;
+    }
   }
   async lifecycle(id: string, action: "encaminhamento" | "finalizacao" | "desativacao" | "reativacao", version: number, actorId: string, requestId: string, actorRole: string) {
     assertRole(actorRole, ["ADMINISTRADOR", "GESTOR_ALMOXARIFADO"]);
