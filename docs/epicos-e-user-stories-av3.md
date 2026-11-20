@@ -1,6 +1,6 @@
 # Épicos e histórias de usuário — GreenCode AV3
 
-A organização segue o estilo de épicos e histórias usado na documentação AV2. As histórias abaixo combinam o enunciado AV3 com as decisões de produto aprovadas.
+As histórias estão organizadas por épico, prioridade e critérios de aceite, seguindo a estrutura usada na documentação AV2. Elas combinam o enunciado AV3 com as decisões de produto aprovadas. Para executar a jornada manual e os testes negativos, consulte o [Guia de execução e testes](guia-de-testes-professor.md).
 
 > Os critérios de aceite detalhados nesta revisão cobrem o primeiro grande passo aprovado (parceiros, API Keys, segurança e API pública inicial). As histórias analíticas e assíncronas permanecem em nível de visão e serão detalhadas antes de suas respectivas implementações.
 
@@ -171,3 +171,19 @@ A organização segue o estilo de épicos e histórias usado na documentação A
 ## Critério geral de aceite
 
 Cada história deve ter critérios de aceite detalhados e testes unitários, HTTP e/ou integração. Histórias que envolvam banco, isolamento, transação ou constraints precisam de testes reais em PostgreSQL. Código sem execução deve ser registrado como implementado, mas não validado.
+
+
+## Jornada mínima de demonstração
+
+A sequência abaixo demonstra a integração externa e não substitui a execução de todos os critérios de aceite:
+
+1. Iniciar a API e autenticar como Administrador.
+2. Consultar uma organização ativa e cadastrar um parceiro.
+3. Associar a organização ao parceiro e guardar o `identificadorPublico` retornado.
+4. Criar API Key com `lotes:write` e `rastreabilidade:read`; guardar o segredo, que é exibido uma única vez.
+5. Submeter lote com equipamentos usando `X-API-Key`, `X-Integration-ID` e `Idempotency-Key`.
+6. Repetir a submissão e conferir a idempotência; testar também um conflito com conteúdo divergente.
+7. Consultar a rastreabilidade pelo identificador GreenCode e pelo `externalId`.
+8. Revogar a API Key e confirmar que novas chamadas são recusadas.
+
+O roteiro detalhado, os comandos automatizados e os resultados esperados estão no [Guia de execução e testes](guia-de-testes-professor.md).

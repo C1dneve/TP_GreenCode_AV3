@@ -1,11 +1,35 @@
 # ADR-0005 — API pública e autenticação por API Key
 
-- **Status:** Aceito para o primeiro grande passo AV3.
-- **Contexto:** A AV3 exige API pública documentada, autenticação por API Key, rate limit, consulta de rastreabilidade, submissão de lotes e separação das rotas internas.
-- **Decisões aprovadas:** manter JWT nas rotas internas; introduzir namespace público versionado e autenticação por API Key; permitir múltiplas chaves por parceiro, individualmente revogáveis; mostrar o segredo uma única vez e armazenar somente hash; associar escopos ao parceiro e à chave.
-- **Regra de autorização:** a permissão efetiva é a interseção dos escopos concedidos ao parceiro com os escopos atribuídos à chave. A chave nunca pode ampliar as permissões do parceiro. A redução de escopos do parceiro deve valer imediatamente para todas as chaves.
-- **Rate limiting:** aplicar limites por chave e/ou parceiro, respeitando o limite mais restritivo configurado. Limites de payload e submissão também devem ser validados.
-- **Auditoria:** operações administrativas e externas relevantes são registradas pela estrutura `EventoAuditoria` existente, ampliada para identificar atores externos, preservando os eventos e a relação de usuário interno da AV2.
-- **Consequências:** novos módulos de parceiros/chaves e rotas públicas; autorização contextual por escopo e organização; atualização da documentação OpenAPI; testes de autenticação, expiração, revogação, permissões, rate limit e isolamento.
-- **Detalhes técnicos ainda sujeitos a validação:** algoritmo/formato de hash, mecanismo concreto de rate limit distribuído e convenção final dos nomes dos escopos. Essas escolhas devem respeitar os requisitos acima e ser registradas no código/documentação.
-- **Alternativas rejeitadas:** reutilizar JWT externo ou misturar rotas públicas e internas, por confundir ciclos de vida e políticas de segurança.
+## Status
+
+Aceito e implementado no primeiro grande passo. Build, migrations e validação PostgreSQL completos permanecem pendentes.
+
+## Contexto
+
+A API pública precisa autenticar sistemas parceiros sem utilizar a sessão JWT de usuários internos. O acesso deve ser restrito por parceiro, chave, escopo e organização, com limites e trilha de auditoria.
+
+## Decisão
+
+- Rotas internas continuam utilizando JWT/RBAC.
+- Gestão de parceiros e chaves exige usuário interno com papel `ADMINISTRADOR`.
+- Rotas públicas são versionadas em `/api/v1/public` e autenticadas por API Key.
+- A API Key usa prefixo `gc_live_` e segredo de 32 bytes aleatórios (`randomBytes(32)`, base64url).
+- O segredo completo é exibido uma única vez; somente SHA-256 hexadecimal é persistido.
+- O digest é comparado com `timingSafeEqual`; o prefixo localiza o registro, mas não autentica isoladamente.
+- Escopos iniciais: `lotes:write` e `rastreabilidade:read`.
+- `escoposEfetivos = escoposParceiro ∩ escoposApiKey`, recalculado em cada requisição.
+- O rate limiting utiliza janela fixa de 60 segundos em memória, com contadores para parceiro e chave; o menor limite vence.
+
+## Justificativa e alternativas
+
+O segredo possui alta entropia e é gerado pelo sistema, não escolhido por uma pessoa. SHA-256 determinístico é adequado para verificar esse segredo aleatório sem armazená-lo em claro; essa justificativa não se aplica a senhas humanas. Foi rejeitado o uso de JWT para autenticar parceiros, o armazenamento do segredo em texto puro e a introdução de Redis somente para o rate limit inicial.
+
+## Consequências
+
+As respostas excedidas usam HTTP `429` e `Retry-After`; payload acima do limite retorna `413`. Os contadores locais reiniciam com o processo e não são compartilhados entre instâncias. Um backend distribuído deverá ser adotado antes da escala horizontal.
+
+Os módulos `parceiros`, `integracoes` e `api-publica` mantêm o ciclo administrativo, a segurança e as rotas externas. O OpenAPI descreve a autenticação e os headers necessários.
+
+## Validação necessária
+
+Executar build, autenticação HTTP, testes de escopos, expiração/revogação, rate limit, submissão e rastreabilidade com PostgreSQL de teste. A execução registrada está em `docs/relatorio-tecnico-av3.md`.

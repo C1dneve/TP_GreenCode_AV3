@@ -1,114 +1,53 @@
-# Estrutura de pastas — base AV2 e evolução AV3
+# Estrutura de pastas — GreenCode AV3
 
-Esta tabela reflete a estrutura observada no ZIP `TP_GreenCode_AV2-main.zip` enviado em 20/11/2026. A orientação é manter os caminhos atuais e acrescentar novos módulos dentro dos mesmos padrões. Os nomes dos novos arquivos são propostas, não arquivos já implementados.
+Este documento explica onde ficam o código, as migrations, os testes e a documentação mantida no repositório. A documentação atual do produto é a documentação AV3 em `docs/`; não há necessidade de manter uma cópia paralela dos documentos funcionais da AV2. Os módulos e o histórico de banco existentes continuam sendo a fundação técnica do sistema.
 
-| Caminho AV2 | Ação na AV3 | Conteúdo / orientação |
-|---|---|---|
-| `.github/workflows/` | Manter e ampliar | CI deve incluir Postgres, Redis, migrations, testes de API e worker nas fases correspondentes |
-| `docs/` | Ampliar | Adicionar os documentos AV3 deste pacote; preservar documentos AV2 como histórico |
-| `docs/adr/` | Ampliar | Novas decisões numeradas após ADR-0004; não sobrescrever ADRs AV2 |
-| `prisma/` | Ampliar | Estender schema e criar migrations versionadas |
-| `prisma/migrations/` | Manter e ampliar | Nunca reescrever migration já aplicada; novas migrations para AV3 |
-| `scripts/` | Manter e ampliar se necessário | Scripts operacionais/migração/fixtures, sem duplicar responsabilidades |
-| `src/config/` | Ampliar | Configuração de Redis, worker, analytics e variáveis públicas nas fases correspondentes |
-| `src/docs/` | Manter/ampliar | CSS/recursos do Swagger; documentar tags e schemas públicos |
-| `src/infrastructure/database/` | Manter | Prisma existente |
-| `src/infrastructure/` | Ampliar | Adicionar integração BullMQ/Redis e storage se necessário |
-| `src/modules/auditoria/` | Ampliar no primeiro passo | Ampliar `EventoAuditoria` existente e seu repositório/serviço para atores externos; preservar consultas e eventos AV2 |
-| `src/modules/auth/` | Manter com cuidado | Preservar JWT interno; API Key deve ter contexto/módulo próprio para não misturar ciclos de vida |
-| `src/modules/parceiros/` | Criar no primeiro passo | CRUD administrativo, escopos máximos, limites e associação com organizações |
-| `src/modules/api-keys/` | Criar no primeiro passo | Emissão, hash, expiração, revogação e autenticação/validação de chaves |
-| `src/modules/api-publica/` | Criar no primeiro passo | Rotas públicas versionadas, submissão, rastreabilidade e contratos externos |
-| `src/modules/contratos/` | Manter | Preservar domínio AV2 |
-| `src/modules/equipamentos/` | Ampliar quando necessário | Consulta autorizada para rastreabilidade; instrumentação histórica/analítica somente na fase analítica |
-| `src/modules/lotes/` | Ampliar no primeiro passo | Submissão externa transacional e resolução por referência do parceiro; preservar regras de domínio AV2 |
-| `src/modules/movimentacoes/` | Manter/ampliar | Reutilizar histórico real para consultas de rastreabilidade e análises quando semanticamente adequado |
-| `src/modules/organizacoes/` | Ampliar no primeiro passo | Consultas de autorização de organizações por parceiro |
-| `src/modules/parametros/` | Ampliar se necessário | Parâmetros analíticos e expiração somente se forem configurações globais |
-| `src/modules/relatorios/` | Ampliar na fase posterior | Solicitação assíncrona, status, histórico, expiração e download |
-| `src/modules/analytics/` | Criar na fase analítica | Cálculos analíticos, persistência de resultados e consultas |
-| `src/modules/jobs/` | Criar na fase assíncrona | Casos de uso para criação/consulta de execuções; worker consome serviços sem duplicar regras |
-| `src/modules/usuarios/` | Manter | Gestão de usuários internos |
-| `src/shared/` | Ampliar com parcimônia | Tipos/helpers realmente transversais; evitar regra de negócio genérica |
-| `src/tests/` | Ampliar | Unitários, HTTP, autorização e integração |
-| `src/tests/integration/` | Ampliar | PostgreSQL, API Keys, isolamento e idempotência no primeiro passo; Redis/worker nas fases posteriores |
-| `src/app.ts` | Ampliar | Registrar módulos/rotas, sem colocar regras de negócio no bootstrap |
-| `src/server.ts` | Manter/ampliar | Processo HTTP e encerramento gracioso |
-| `package.json` | Alterar na implementação | Dependências/scripts de API Keys/rate limit e, nas fases posteriores, BullMQ/Redis e worker |
-| `package-lock.json` | Regenerar na implementação | Sempre sincronizado com package.json |
-| `Dockerfile` | Avaliar/ampliar | Suportar execução API e worker por comandos/targets adequados quando worker for implementado |
-| `docker-compose.yml` | Ampliar nas fases necessárias | Adicionar Redis e serviço worker sem remover serviços/volumes existentes |
-| `.env.example` | Ampliar | Variáveis documentadas, valores demonstrativos e sem segredos |
-| `.gitignore` / `.dockerignore` | Revisar | Ignorar artefatos, arquivos temporários e segredos |
-| `README.md` | Atualizar na cópia AV3 | Basear no README AV2; descrever arquitetura e operação AV3 |
-| `tsconfig.json`, `prisma.config.ts`, `.nvmrc` | Preservar | Não trocar configurações funcionais sem necessidade |
+## Estrutura principal
 
-## Novos módulos sugeridos
+| Caminho | Responsabilidade |
+|---|---|
+| `README.md` | Apresentação, execução inicial, rotas públicas e comandos de teste |
+| `docs/` | Visão do produto, requisitos, arquitetura, dados, histórias, plano, relatório e guia de testes AV3 |
+| `docs/adr/` | Decisões arquiteturais AV3; numeração existente preservada |
+| `prisma/schema.prisma` | Schema atual dos modelos operacionais e de integração |
+| `prisma/migrations/` | Histórico de migrations; alterações AV3 em migration nova |
+| `prisma/seed.ts` | Administrador inicial e massa demonstrativa de organizações, contratos, lotes e equipamentos |
+| `src/config/` | Leitura e validação das variáveis de ambiente |
+| `src/docs/` | Recursos estáticos utilizados pelo Swagger UI |
+| `src/infrastructure/database/` | Criação e configuração do cliente Prisma/PostgreSQL |
+| `src/modules/auth/` | JWT, login e sessão dos usuários internos |
+| `src/modules/usuarios/` | Cadastro e administração de usuários |
+| `src/modules/organizacoes/` | Cadastro e manutenção de organizações |
+| `src/modules/contratos/` | Vigência e histórico contratual |
+| `src/modules/lotes/` | Recebimento e ciclo operacional de lotes |
+| `src/modules/equipamentos/` | Cadastro e estados dos equipamentos |
+| `src/modules/movimentacoes/` | Histórico de movimentações |
+| `src/modules/parceiros/` | CRUD administrativo de parceiros, associações e ciclo de vida das chaves |
+| `src/modules/integracoes/` | Geração/verificação de API Key, escopos, hash canônico e rate limiting |
+| `src/modules/api-publica/` | Autenticação externa, submissão e consulta de rastreabilidade |
+| `src/modules/auditoria/` | Registro e consulta de auditoria existente ampliada |
+| `src/modules/relatorios/` | Relatórios operacionais/financeiros disponíveis na base atual |
+| `src/modules/parametros/` | Parâmetros globais |
+| `src/tests/` | Testes unitários e HTTP |
+| `src/tests/integration/` | Testes que exigem PostgreSQL dedicado com `test` no nome da base |
+| `src/app.ts` | Registro dos módulos, hooks, tratamento de erros e OpenAPI |
+| `src/server.ts` | Inicialização do servidor e conexão com o banco |
+| `package.json` / `package-lock.json` | Metadados, scripts e dependências do projeto |
+| `Dockerfile` / `docker-compose.yml` | Imagem da aplicação, banco principal e ambiente isolado de testes |
+| `.env.example` | Valores locais de exemplo, sem credenciais de produção |
 
-Seguir o padrão controller/service/repository/module/routes já utilizado:
+## Organização dos módulos novos
 
 ```text
 src/modules/
-  parceiros/       # primeiro grande passo
-  api-keys/        # primeiro grande passo
-  api-publica/     # primeiro grande passo
-  analytics/       # fase analítica
-  jobs/            # fase assíncrona
-  relatorios/      # ampliar módulo existente na fase de relatórios
-src/infrastructure/
-  queue/           # fase assíncrona
-  storage/         # somente se houver armazenamento externo/abstração real
+  parceiros/       # gestão administrativa de parceiros, organizações e chaves
+  integracoes/     # segurança de API Key, escopos, hash e rate limit
+  api-publica/     # autenticação externa, submissão e rastreabilidade
+  auditoria/       # estrutura já existente ampliada para atores externos
 ```
 
-### Observações de organização
+A autenticação JWT interna permanece separada da API Key pública. O ciclo administrativo das chaves fica no módulo `parceiros`, evitando duplicar a gestão do parceiro. Os serviços novos ainda possuem acessos diretos a Prisma em pontos documentados no [relatório técnico](relatorio-tecnico-av3.md); a arquitetura operacional existente utiliza Repository.
 
-- `api-publica` agrupa rotas e contratos externos; autenticação por API Key deve ser um plugin/hook reutilizável.
-- `api-keys` gerencia ciclo de vida e validação de chaves; não armazena segredo em claro.
-- `parceiros` concentra CRUD, configurações, escopos máximos, limites e organizações autorizadas.
-- A auditoria externa amplia `EventoAuditoria` e seus serviços/repositórios existentes; não criar módulo/tabela paralela sem justificativa e ADR.
-- As permissões efetivas da API Key são a interseção entre escopos do parceiro e escopos da chave.
-- A submissão pública deve reutilizar os serviços/regras de domínio de lotes e equipamentos sempre que possível; não duplicar regras de negócio nos controllers públicos.
-- A rastreabilidade pública deve projetar apenas os campos autorizados; não expor diretamente objetos Prisma completos.
-- `analytics` concentra serviços de cálculo e persistência de resultados.
-- `jobs` concentra casos de uso para criação/consulta de execuções; o worker consome serviços dos módulos, sem duplicar regras.
-- Se o padrão real do projeto justificar outra divisão, registrar ADR antes de alterar estrutura.
+## Fases futuras
 
-## Árvore-alvo resumida
-
-```text
-.
-├── .github/workflows/
-├── docs/
-│   └── adr/
-├── prisma/
-│   └── migrations/
-├── scripts/
-└── src/
-    ├── config/
-    ├── docs/
-    ├── infrastructure/
-    │   ├── database/
-    │   ├── queue/              # fase assíncrona
-    │   └── storage/            # opcional
-    ├── modules/
-    │   ├── auditoria/
-    │   ├── auth/
-    │   ├── api-keys/
-    │   ├── api-publica/
-    │   ├── analytics/
-    │   ├── parceiros/
-    │   ├── jobs/
-    │   ├── contratos/
-    │   ├── equipamentos/
-    │   ├── lotes/
-    │   ├── movimentacoes/
-    │   ├── organizacoes/
-    │   ├── parametros/
-    │   ├── relatorios/
-    │   └── usuarios/
-    ├── shared/
-    ├── tests/
-    │   └── integration/
-    ├── app.ts
-    └── server.ts
-```
+As pastas de analytics, jobs, filas, workers e armazenamento de artefatos não são criadas antecipadamente sem casos de uso implementados. Essas funcionalidades serão acrescentadas quando os próximos incrementos forem aprovados.

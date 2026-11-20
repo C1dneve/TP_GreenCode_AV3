@@ -1,129 +1,111 @@
-# GreenCode AV3 — visão do projeto
+# GreenCode AV3: história, estrutura e arquitetura
 
-## 1. Propósito
+## O que é o GreenCode
 
-Evoluir o GreenCode AV2, um monólito modular de logística reversa, para uma plataforma analítica e integrada. A AV3 não é um segundo sistema independente: é a continuação do produto, preservando o domínio, os módulos e a fundação técnica aprovados na AV2.
+O GreenCode apoia a logística reversa de equipamentos eletrônicos. O sistema registra organizações, contratos, lotes recebidos, equipamentos e movimentações, mantendo o histórico necessário para acompanhar o ciclo operacional e consultar informações do processo.
 
-## 2. Escopo explicitado no enunciado AV3
+## Da AV2 para a AV3
 
-### 2.1 Camada analítica
+A AV2 consolidou o backend como uma API REST com autenticação de usuários, permissões por papel, persistência em PostgreSQL e auditoria. A AV3 amplia esse produto em duas direções: integrações externas com organizações parceiras e uma camada analítica/preditiva para apoiar decisões operacionais.
 
-A camada deve produzir métricas agregadas e relatórios preditivos, incluindo no mínimo:
+A AV3 mantém o domínio operacional existente. As rotas internas continuam utilizando JWT e RBAC; os parceiros externos utilizam API Keys, escopos próprios e vínculos explícitos com as organizações que podem acessar. A API pública é versionada e não expõe diretamente as rotas administrativas ou internas.
 
-- Eficiência operacional: tempo médio entre entrada do lote e conclusão da triagem, com análise de gargalos e variações por operador e período.
-- Rentabilidade por tipo de equipamento: estimativa do valor médio de recuperação de materiais considerando estado físico, marca e modelo.
-- Vida útil remanescente: regressão simples ou suavização exponencial com base em histórico de depreciação e falhas; resultados devem ser persistidos para consulta histórica e comparação com realizações futuras.
+O primeiro incremento concentra-se na fundação das integrações: cadastro e administração de parceiros, associação de organizações, emissão e revogação de API Keys, submissão pública de lotes e consulta de rastreabilidade. A camada analítica e o processamento assíncrono permanecem planejados para etapas posteriores.
 
-O enunciado cita `simple-statistics` e `mathjs` como opções estatísticas e `node-cron` ou jobs recorrentes em worker como opções de agendamento. A escolha final precisa ser justificada tecnicamente.
+## O que o sistema faz nesta etapa
 
-### 2.2 API pública
+- Mantém usuários internos, seus papéis e a autorização das operações administrativas.
+- Mantém organizações, contratos, lotes, equipamentos e movimentações do fluxo operacional.
+- Permite ao Administrador cadastrar e administrar parceiros externos.
+- Autoriza um parceiro a operar somente nas organizações associadas a ele.
+- Emite várias API Keys por parceiro, com escopos, validade opcional, limites e revogação individual.
+- Recebe lotes enviados por parceiros, com ou sem equipamentos, em uma transação única.
+- Evita duplicidade por `Idempotency-Key` e por `externalId` dentro do contexto do parceiro.
+- Disponibiliza rastreabilidade pública por identificador GreenCode ou referência externa do parceiro.
+- Registra operações internas e externas na estrutura de auditoria existente.
 
-A API pública deve permitir integração de organizações parceiras com o GreenCode, incluindo:
+## Arquitetura em poucas palavras
 
-- Consulta de status de rastreabilidade.
-- Submissão de novos lotes.
-- Solicitação/recebimento de relatórios analíticos.
-- Autenticação baseada em API Keys e limites de taxa.
-- Permissões específicas associadas às chaves/parceiros.
-- Documentação interativa com exemplos de request/response, erros e parâmetros.
-- Separação entre endpoints públicos e internos/administrativos.
-- Versionamento explícito da API pública.
+O GreenCode AV3 continua sendo um **monólito modular**: a aplicação é entregue como um único serviço HTTP, mas o código é separado por responsabilidades e áreas de negócio.
 
-### 2.3 Processamento assíncrono
+```text
+Cliente interno / Swagger / Sistema parceiro
+                  ↓
+             Fastify / Rotas
+                  ↓
+       Controllers e autenticação
+                  ↓
+       Services e regras de domínio
+                  ↓
+        Repositories / Prisma
+                  ↓
+             PostgreSQL
+```
 
-- Enfileirar operações demoradas, como análises e relatórios.
-- Retornar identificador único da tarefa.
-- Disponibilizar consulta de status.
-- Permitir acesso ao resultado quando concluído.
-- O enunciado exemplifica BullMQ e Redis, e menciona polling ou webhook.
+As rotas internas usam JWT/RBAC. As rotas administrativas de parceiros exigem o papel `ADMINISTRADOR`. As rotas públicas usam API Key e verificam escopos efetivos e associação ativa com a organização. Os módulos operacionais continuam utilizando o padrão Controller-Service-Repository. Nos módulos novos de parceiros e API pública, parte da persistência é acessada diretamente pelos services e transações Prisma; essa divergência está registrada para refatoração antes da expansão dos casos de uso.
 
-### 2.4 Entrega técnica e compatibilidade
+## Tecnologias
 
-A entrega inclui código-fonte completo com camada analítica e API pública documentada, além de relatório técnico justificando biblioteca estatística, persistência dos resultados, retry e evolução para centenas ou milhares de parceiros. O enunciado exige compatibilidade com Windows 10 ou superior e Ubuntu 24.04.03 ou superior (incluindo derivados).
+- **Node.js 24 e TypeScript:** ambiente de execução e linguagem.
+- **Fastify 5:** servidor HTTP, rotas e validação dos contratos.
+- **Prisma 7:** acesso tipado ao banco e migrações versionadas.
+- **PostgreSQL 17:** armazenamento principal dos dados e das regras de integridade.
+- **JWT e bcrypt:** sessão dos usuários internos e proteção de senhas.
+- **API Keys:** autenticação dos sistemas parceiros, com segredo exibido uma única vez e persistido somente como hash.
+- **Swagger/OpenAPI:** documentação interativa das rotas internas, administrativas e públicas.
+- **Docker Compose:** inicialização reproduzível da API, do PostgreSQL e do ambiente de testes.
 
-## 3. Decisões de produto aprovadas
+## Organização do código
 
-As regras a seguir são decisões de produto aprovadas pelo responsável, não devem ser atribuídas literalmente ao enunciado:
+Dentro de `src/`, cada módulo concentra uma parte do sistema:
 
-### 3.1 Parceiros, organizações e API Keys
+| Módulo | Responsabilidade |
+|---|---|
+| `auth` | Login, sessão, logout e troca de senha de usuários internos |
+| `usuarios` | Cadastro, consulta e administração dos usuários |
+| `organizacoes` | Cadastro e manutenção das organizações |
+| `contratos` | Vigência, renovação e histórico contratual |
+| `lotes` | Recebimento, triagem, encaminhamento e finalização |
+| `equipamentos` | Cadastro, condição física e estados de rastreamento |
+| `movimentacoes` | Histórico de deslocamento dos equipamentos |
+| `parceiros` | Gestão administrativa de parceiros, vínculos e API Keys |
+| `integracoes` | Geração/verificação de chaves, escopos, hash canônico e rate limiting |
+| `api-publica` | Autenticação externa, submissão de lotes e rastreabilidade |
+| `auditoria` | Consulta e registro dos eventos relevantes |
+| `relatorios` | Relatórios operacionais e financeiros existentes na base |
+| `parametros` | Parâmetros globais utilizados pelo domínio |
 
-- JWT continua sendo usado nas rotas internas; API Key autentica integrações externas.
-- Cadastro e gestão de parceiros são restritos ao Administrador GreenCode.
-- Um parceiro pode ter múltiplas chaves, identificáveis e revogáveis individualmente; o segredo é exibido uma única vez e armazenado somente como hash.
-- Um parceiro pode acessar várias organizações, somente quando explicitamente autorizado.
-- As permissões efetivas de uma chave são a interseção entre as permissões concedidas ao parceiro e os escopos atribuídos à própria chave. Uma chave nunca amplia as permissões do parceiro.
-- A autorização de organização é verificada em toda operação pública; um `partnerId` enviado pelo cliente nunca é considerado prova de autorização.
-- Limites de taxa e de submissão podem ser configurados por parceiro, com possibilidade de limites mais restritivos por chave.
+O schema e as migrations ficam em `prisma/`; os testes automatizados ficam em `src/tests/`; os documentos de produto e decisões ficam em `docs/`.
 
-### 3.2 Submissão e rastreabilidade
+## Dados e relações principais
 
-- Submissões de parceiro podem conter somente o lote ou o lote acompanhado de equipamentos.
-- Submissões são atômicas: tudo é persistido ou nada é persistido.
-- A API pública permite consulta de rastreabilidade de lotes e equipamentos das organizações autorizadas.
-- A resposta de rastreabilidade pode incluir informações operacionais do lote e, para os equipamentos, tipo, marca, modelo, estado físico e situação atual, além do histórico de movimentações.
-- A resposta pública aplica minimização de dados: não expõe CNPJ, dados pessoais, nomes de usuários internos, identificadores internos não destinados à integração, credenciais ou informações operacionais internas desnecessárias.
-- A política de submissão pode ser configurada por parceiro; as validações de domínio da AV2 continuam obrigatórias.
+Uma organização pode possuir vários contratos históricos e receber lotes. Cada lote pode conter equipamentos, e cada equipamento mantém suas movimentações. Na AV3, um parceiro pode estar associado a várias organizações, mas cada associação precisa ser autorizada explicitamente e possui um identificador público de integração.
 
-### 3.3 Idempotência
+Um parceiro pode possuir várias API Keys. A permissão efetiva de cada chave é a interseção dos escopos do parceiro com os escopos específicos da chave. A chave não amplia o acesso concedido ao parceiro. Os registros de idempotência e de referência externa são isolados por parceiro e apontam para o lote criado ou reutilizado.
 
-- A submissão aceita `Idempotency-Key` e identificador externo (`externalId`) único por parceiro, quando informado.
-- Mesma `Idempotency-Key` e mesmo conteúdo normalizado: retornar o resultado original, sem criar novo lote.
-- Mesma `Idempotency-Key` com conteúdo diferente: responder HTTP `409 Conflict`.
-- Mesmo `externalId` e mesmo conteúdo, mesmo com outra `Idempotency-Key`: retornar o recurso original e associar a nova chave de idempotência ao mesmo resultado, sem duplicar o lote.
-- Mesmo `externalId` com conteúdo diferente: responder HTTP `409 Conflict`.
-- A verificação de idempotência, a criação do lote/equipamentos e os registros de referência devem ser consistentes e transacionais; nenhuma submissão pode deixar registros parciais.
+Os eventos de auditoria continuam na estrutura `EventoAuditoria`. A AV3 acrescenta campos opcionais para identificar ator externo, parceiro, API Key e organização, sem apagar o relacionamento com usuários internos.
 
-### 3.4 Auditoria
+## Regras que orientam o funcionamento
 
-- As operações administrativas e externas relevantes devem ser auditadas: parceiros, associações de organizações, API Keys, permissões, submissões e consultas/solicitações de relatórios quando aplicável.
-- A AV3 amplia o modelo `EventoAuditoria` já existente na AV2, preservando seus registros e a relação com usuários internos. Não criar uma segunda infraestrutura/tabela de auditoria de parceiros sem justificativa técnica aprovada.
-- Eventos externos devem identificar, quando autenticados, o parceiro e a API Key utilizados, além da organização afetada, ação, entidade, resultado, instante e request ID.
-- Segredos, hashes de API Keys, cabeçalhos de autenticação, tokens, credenciais e dados pessoais desnecessários nunca devem ser armazenados nos detalhes de auditoria.
+- Rotas internas continuam protegidas por JWT e RBAC.
+- Somente o Administrador pode gerir parceiros, associações e API Keys.
+- Parceiros só acessam organizações com vínculo ativo e organização ativa.
+- Escopos efetivos são calculados por `escoposParceiro ∩ escoposApiKey` em cada requisição.
+- O segredo completo da API Key é mostrado somente na criação; o banco armazena o hash SHA-256.
+- A API pública usa `X-API-Key`; submissões também exigem `X-Integration-ID` e `Idempotency-Key`.
+- Submissões de lote e equipamentos são atômicas: tudo é salvo ou nada é salvo.
+- A mesma chave de idempotência e o mesmo conteúdo retornam o resultado original; conteúdo divergente gera `409`.
+- A mesma referência externa e o mesmo conteúdo reutilizam o lote original no contexto do parceiro.
+- A rastreabilidade pública não expõe CNPJ, dados pessoais, IDs internos, códigos de barras internos, credenciais ou dados de outros parceiros.
+- O rate limiting usa contadores em memória do processo nesta etapa; não é distribuído entre instâncias.
+- Migrations são versionadas e as migrations anteriores não devem ser reescritas.
 
-### 3.5 Analytics e relatórios
+## O que ainda não está implementado
 
-- Previsões individuais e agrupadas; registrar método, amostra, qualidade/confiança, razões de indisponibilidade, data de cálculo e conjunto de dados utilizado.
-- Distinguir valor estimado de recuperação de valor financeiro realizado.
-- Relatório com solicitação, status, histórico, download autenticado, expiração configurável com padrão de sete dias e possibilidade de regeneração após expirar.
-- Indicadores diários, previsões semanais e execução manual.
-- Polling inicialmente; sem webhooks na primeira entrega.
+A AV3 completa também prevê indicadores de eficiência operacional, estimativa de recuperação, previsão de vida útil remanescente e processamento assíncrono de relatórios. Essas funcionalidades exigem instrumentação e modelos de dados específicos e serão desenvolvidas nos próximos grandes passos.
 
-## 4. Fora de escopo inicial
+Neste incremento não há Redis, BullMQ, workers, scheduler, webhooks, solicitação de relatórios pela API pública nem download de artefatos. O registro técnico e o [plano de implementação](plano-de-implementacao-av3.md) distinguem essas entregas futuras do que já está no código.
 
-- SPA/front-end novo.
-- Webhooks para parceiros.
-- Microserviços independentes.
-- Reescrita dos módulos transacionais AV2.
-- Alterações arbitrárias nas regras de domínio existentes.
-- Exposição de rotas internas por meio da API pública.
+## Execução e testes
 
-## 5. Primeiro grande passo de implementação
-
-O primeiro grande passo aprovado reúne a fundação de integração e a API pública inicial:
-
-1. Preparar a cópia AV3 da AV2 sem alterar a história/repositório AV2.
-2. Implementar gestão administrativa de parceiros e organizações autorizadas.
-3. Implementar ciclo de vida de API Keys, hash do segredo, escopos e autorização pela interseção parceiro/chave.
-4. Ampliar a auditoria existente para identificar atores internos e externos.
-5. Implementar rate limiting e limites de submissão.
-6. Implementar submissão pública de lote-only e lote com equipamentos, transacional e idempotente.
-7. Implementar consulta pública de rastreabilidade com dados operacionais do lote e dados autorizados dos equipamentos, respeitando minimização de dados.
-8. Atualizar Swagger/OpenAPI e cobrir as funcionalidades com testes.
-
-A camada analítica, Redis/BullMQ, workers e relatórios assíncronos permanecem para grandes passos posteriores.
-
-## 6. Princípios de evolução
-
-1. Preservar a estrutura `src/modules/<dominio>` e o padrão controller/service/repository.
-2. Adicionar novos módulos sem concentrar lógica de negócio em controllers.
-3. Usar migrações versionadas; nunca `db push` como substituto.
-4. Persistir resultados analíticos com versão do método/modelo e referência temporal.
-5. Separar API processadora (Fastify) do processo worker, compartilhando módulos e infraestrutura.
-6. Aplicar autorização por parceiro, interseção de escopos e organização em toda leitura/escrita pública.
-7. Não registrar segredos de API, tokens ou credenciais.
-8. Manter AV2 íntegra e criar AV3 em novo repositório derivado.
-9. Não alterar componentes transacionais AV2 fora do necessário para integrar o novo fluxo; problemas não bloqueadores devem ser documentados, não corrigidos incidentalmente.
-
-## 7. Referências internas
-
-Ver requisitos, arquitetura, modelo de dados, histórias, plano de implementação e ADRs desta pasta.
+A forma recomendada de iniciar a aplicação e executar os testes é Docker Compose, no Windows 10 ou superior e Ubuntu 24.04 ou superior. O roteiro detalhado está no [Guia de execução e testes](guia-de-testes-professor.md). O [README](../README.md) contém os comandos iniciais.

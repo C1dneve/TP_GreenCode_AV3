@@ -1,46 +1,73 @@
 # Requisitos da AV3 e rastreabilidade
 
-Legenda de origem:
-- **[ENUNCIADO]** requisito expresso no PDF AV3.
-- **[DECISÃO]** decisão de produto aprovada pelo responsável.
-- **[PROPOSTA]** desenho técnico recomendado; validar durante implementação.
+Este documento organiza os requisitos do enunciado, as decisões de produto aprovadas e as propostas técnicas. A classificação de origem evita confundir o que foi solicitado na atividade com escolhas adotadas para tornar a solução implementável.
+
+- **[ENUNCIADO]** requisito expresso no PDF da AV3.
+- **[DECISÃO]** regra de produto aprovada para o GreenCode AV3.
+- **[PROPOSTA]** solução técnica a confirmar antes da implementação da respectiva fase.
+
+## Requisitos funcionais e técnicos
 
 | ID | Requisito | Origem | Evidência esperada |
 |---|---|---|---|
-| ANA-01 | Calcular tempo médio da entrada do lote até conclusão da triagem | [ENUNCIADO] | Teste com timestamps reais e resultado agregado |
-| ANA-02 | Comparar gargalos/variações por operador e período | [ENUNCIADO] | Testes de filtros e agregações |
+| ANA-01 | Calcular o tempo médio entre entrada do lote e conclusão da triagem | [ENUNCIADO] | Agregação baseada em timestamps persistidos |
+| ANA-02 | Comparar gargalos e variações por operador e período | [ENUNCIADO] | Testes de filtros e agrupamentos |
 | ANA-03 | Estimar recuperação por tipo de equipamento considerando estado, marca e modelo | [ENUNCIADO] | Relatório com metodologia e amostra |
-| ANA-04 | Prever vida útil remanescente usando histórico de depreciação/falhas | [ENUNCIADO] | Testes do método e cenários sem histórico |
-| ANA-05 | Persistir previsões para histórico e comparação posterior | [ENUNCIADO] | Consulta de resultados anteriores |
-| ANA-06 | Registrar método, amostra, qualidade/confiança e motivo de indisponibilidade | [DECISÃO] | Contrato e testes de resposta |
-| API-01 | API pública com autenticação por API Keys | [ENUNCIADO] | Testes de autenticação |
-| API-02 | Limites de requisição por cliente/parceiro | [ENUNCIADO] | Testes de rate limit |
-| API-03 | Permissões específicas associadas a chaves/parceiros | [ENUNCIADO]/[DECISÃO] | Testes de escopos e autorização efetiva |
-| API-04 | Rotas públicas separadas das internas e versionadas | [ENUNCIADO] | Registro de rotas e testes de isolamento |
-| API-05 | OpenAPI com exemplos, erros e parâmetros | [ENUNCIADO] | Documento gerado e inspeção Swagger |
-| API-06 | Disponibilizar consulta pública de status de rastreabilidade | [ENUNCIADO] | Testes HTTP de consulta autorizada e não autorizada |
-| API-07 | Disponibilizar submissão pública de novos lotes | [ENUNCIADO] | Testes HTTP de submissão lote-only e lote com equipamentos |
-| API-08 | Disponibilizar solicitação/recebimento de relatórios analíticos por integração | [ENUNCIADO] | Testes de solicitação, status e resultado na fase assíncrona |
-| API-09 | Resposta de rastreabilidade com dados operacionais e dados autorizados do equipamento, sem exposição desnecessária de dados pessoais/internos | [DECISÃO] | Testes de contrato e de minimização de dados |
-| PAR-01 | CRUD administrativo de parceiros | [DECISÃO] | Testes RBAC e regras de estado |
-| PAR-02 | Autorizar e remover organizações vinculadas a um parceiro | [DECISÃO] | Testes de associação, remoção e isolamento |
-| PAR-03 | Múltiplas chaves por parceiro, revogação e hash do segredo | [DECISÃO] | Testes de ciclo de vida; segredo exibido uma vez |
-| PAR-04 | Limites configuráveis: taxa, tamanho de lote e jobs concorrentes | [DECISÃO] | Testes de configuração e enforcement |
-| PAR-05 | Permissões efetivas limitadas pela interseção entre escopos do parceiro e da chave | [DECISÃO] | Testes de permissões permitidas e negadas |
-| INT-01 | Submissão lote-only ou lote+equipamentos, transacional | [DECISÃO] | Testes de rollback integral |
-| INT-02 | Idempotência por Idempotency-Key e external ID único por parceiro | [DECISÃO] | Testes de repetição, conteúdo divergente e conflito |
-| INT-03 | Consulta de rastreabilidade limitada às organizações autorizadas e aos escopos da chave | [DECISÃO] | Testes de isolamento entre parceiros, organizações e chaves |
-| JOB-01 | Enfileirar análises/relatórios demorados | [ENUNCIADO] | Teste de publicação e consumo |
-| JOB-02 | Retornar task ID e permitir polling do status | [ENUNCIADO]/[DECISÃO] | Testes de estados |
+| ANA-04 | Prever vida útil remanescente com histórico de depreciação e falhas | [ENUNCIADO] | Testes numéricos e cenário sem histórico suficiente |
+| ANA-05 | Persistir previsões para consulta histórica e comparação com resultados posteriores | [ENUNCIADO] | Consulta de resultados anteriores e comparação |
+| ANA-06 | Registrar método, amostra, qualidade e motivo de indisponibilidade | [DECISÃO] | Contrato de resposta e testes de dados insuficientes |
+| API-01 | Disponibilizar API pública autenticada por API Keys | [ENUNCIADO] | Testes de autenticação válida e inválida |
+| API-02 | Limitar requisições por cliente/parceiro | [ENUNCIADO] | Testes de limite e resposta `429` |
+| API-03 | Associar permissões específicas a parceiros e chaves | [ENUNCIADO]/[DECISÃO] | Testes de escopos efetivos e negação |
+| API-04 | Separar rotas públicas das internas e utilizar versionamento explícito | [ENUNCIADO] | Inspeção de rotas e testes de isolamento |
+| API-05 | Documentar API com exemplos, erros e parâmetros | [ENUNCIADO] | Swagger/OpenAPI atualizado |
+| API-06 | Permitir consulta pública de rastreabilidade | [ENUNCIADO] | Consulta autorizada e tentativa não autorizada |
+| API-07 | Permitir submissão pública de novos lotes | [ENUNCIADO] | Submissão lote-only e lote com equipamentos |
+| API-08 | Permitir solicitação/recebimento de relatórios analíticos por integração | [ENUNCIADO] | Solicitação, status e resultado na fase assíncrona |
+| API-09 | Minimizar dados expostos na rastreabilidade pública | [DECISÃO] | Teste de contrato sem dados internos/pessoais |
+| PAR-01 | Disponibilizar CRUD administrativo de parceiros | [DECISÃO] | Testes de JWT/RBAC e regras de estado |
+| PAR-02 | Associar e revogar organizações autorizadas por parceiro | [DECISÃO] | Testes de vínculo e isolamento |
+| PAR-03 | Emitir múltiplas API Keys, armazenar hash e permitir revogação individual | [DECISÃO] | Testes de ciclo de vida e segredo exibido uma vez |
+| PAR-04 | Configurar limites por parceiro e, opcionalmente, limites mais restritivos por chave | [DECISÃO] | Testes de configuração e aplicação de limites |
+| PAR-05 | Calcular permissões efetivas pela interseção parceiro/chave | [DECISÃO] | Testes de permissão concedida e negada |
+| INT-01 | Submeter lote sem equipamentos ou lote com equipamentos em uma única transação | [DECISÃO] | Testes de sucesso e rollback |
+| INT-02 | Evitar duplicidade por `Idempotency-Key` e `externalId`, por parceiro | [DECISÃO] | Testes de repetição, concorrência e conflito |
+| INT-03 | Restringir consulta e escrita às organizações autorizadas e aos escopos efetivos | [DECISÃO] | Testes de isolamento entre parceiros/organizações/chaves |
+| JOB-01 | Enfileirar análises e relatórios demorados | [ENUNCIADO] | Teste de publicação e consumo na fase de filas |
+| JOB-02 | Retornar task ID e permitir consulta de status | [ENUNCIADO]/[DECISÃO] | Testes de ciclo de vida do job |
 | JOB-03 | Disponibilizar resultado após conclusão | [ENUNCIADO] | Teste de autorização e download |
-| JOB-04 | Retry documentado e seguro | [ENUNCIADO] | Testes de falha/reprocessamento |
-| REL-01 | Histórico de solicitações, status, download autenticado e expiração | [DECISÃO] | Testes de acesso e expiração |
-| REL-02 | Expiração configurável, padrão de sete dias; regeneração | [DECISÃO] | Testes de expiração/regeneração |
-| AUD-01 | Auditar alterações de parceiro, associações, chaves, permissões, submissões e operações externas de rastreabilidade/relatórios | [DECISÃO] | Eventos auditáveis com ator, parceiro, chave, organização, ação, resultado e request ID quando aplicável |
-| OPS-01 | Indicadores diários, previsões semanais e execução manual | [DECISÃO] | Jobs recorrentes e endpoint/admin manual |
-| TECH-01 | Relatório técnico: biblioteca, persistência, retry e escalabilidade | [ENUNCIADO] | `relatorio-tecnico-av3.md` preenchido com decisões reais |
-| COMP-01 | Compatibilidade Windows 10+ e Ubuntu 24.04.03+ | [ENUNCIADO] | Guia e testes documentados por plataforma |
+| JOB-04 | Implementar retry seguro e rastreável | [ENUNCIADO] | Testes de falha transitória e reprocessamento |
+| REL-01 | Manter histórico de relatórios, status, download autenticado e expiração | [DECISÃO] | Testes de acesso e expiração |
+| REL-02 | Definir expiração configurável e regeneração de relatório expirado | [DECISÃO] | Testes de expiração/regeneração |
+| AUD-01 | Auditar operações administrativas e externas relevantes | [DECISÃO] | Eventos com ator, parceiro, chave, organização, ação, resultado e request ID quando aplicável |
+| OPS-01 | Disponibilizar indicadores diários, previsões semanais e execução manual | [DECISÃO] | Jobs recorrentes e execução administrativa |
+| TECH-01 | Justificar biblioteca estatística, persistência, retry e escalabilidade no relatório técnico | [ENUNCIADO] | `relatorio-tecnico-av3.md` atualizado com decisões efetivas |
+| COMP-01 | Compatibilidade com Windows 10+ e Ubuntu 24.04.03+ e derivados | [ENUNCIADO] | Guia reproduzível e evidências por plataforma |
 
-## Critério de conclusão
+## Estado do primeiro grande passo
 
-Um requisito só pode ser marcado como validado após execução de teste ou inspeção verificável adequada. Código escrito, sem execução, deve ser registrado como implementado e não validado. O estado da matriz deve ser atualizado durante a implementação.
+A tabela abaixo distingue código implementado de validação executada. Uma funcionalidade não deve ser marcada como validada somente porque seus arquivos foram escritos.
+
+| Requisito | Situação no código recebido | Estado da validação |
+|---|---|---|
+| PAR-01 a PAR-05 | Implementados no primeiro incremento | Pendente de build e testes HTTP/PostgreSQL completos |
+| API-01 a API-07 | Implementados para o escopo inicial de lote e rastreabilidade | Pendente de execução da suíte completa |
+| INT-01 a INT-03 | Implementados com transação serializável, tabelas separadas e constraints | Pendente de validação de rollback e concorrência no PostgreSQL |
+| AUD-01 | Implementado para operações administrativas e externas descritas no relatório | Persistência não homologada em banco neste ambiente |
+| ANA-01 a ANA-06 | Fase analítica futura | Não implementados |
+| API-08, JOB-01 a JOB-04, REL-01/02 e OPS-01 | Fases de analytics, filas e relatórios | Não implementados |
+| TECH-01 | Relatório técnico criado | Conteúdo atualizado; decisões futuras permanecem pendentes |
+| COMP-01 | Instruções de execução para Windows e Ubuntu documentadas | Compatibilidade deve ser testada em cada ambiente |
+
+## Evidências e critérios de conclusão
+
+- A validação funcional manual deve seguir o [Guia de execução e testes](guia-de-testes-professor.md).
+- A suíte unitária/HTTP deve ser executada por `npm test` ou pelo comando Docker Compose documentado.
+- A suíte PostgreSQL deve ser executada por `npm run test:integration` em banco dedicado cujo nome contenha `test`.
+- Migrations, constraints, transações, idempotência e isolamento precisam de execução real em PostgreSQL.
+- Build, geração/validação Prisma e testes devem ser registrados com o resultado efetivo do terminal.
+- Código escrito sem execução é registrado como implementado, mas não validado.
+
+## Limitações conhecidas na revisão documental
+
+A revisão do código recebido identificou que a operação de submissão grava `SUBMISSAO_PUBLICA_LOTE`, mas a lista de ações consultadas para compor `historicoOperacional` ainda não inclui esse evento. Até a correção e novo teste, a presença da submissão inicial no histórico público deve ser tratada como pendente. Também está registrada no relatório técnico a divergência de persistência direta via Prisma nos services novos em relação ao padrão Repository dos módulos operacionais.

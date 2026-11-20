@@ -4,6 +4,7 @@ import { assertRole } from "../../shared/authorization.js";
 import { pageMeta } from "../../shared/pagination.js";
 import { requireExpectedVersion } from "../../shared/version.js";
 import { LotesRepository } from "./lotes.repository.js";
+import { normalizeLoteCreateInput } from "./lote-domain.js";
 const view = (row: any) => row ? ({ ...row, quantidadeEquipamentos: row._count?.equipamentos ?? 0, _count: undefined }) : row;
 function parseDate(value: string) { const d = new Date(value); if (!Number.isFinite(d.getTime())) throw errors.badRequest("VALIDATION_ERROR", "Data inválida."); return d; }
 export class LotesService {
@@ -17,10 +18,8 @@ export class LotesService {
   async get(id: string, actorRole: string) { assertRole(actorRole, ["ADMINISTRADOR", "GESTOR_ALMOXARIFADO"]); const row = await this.repo.findById(id); if (!row) throw errors.notFound("LOT_NOT_FOUND", "Lote não encontrado."); return view(row); }
   async create(input: { organizacaoId: string; dataEntrada?: string; notaFiscal: string; transportadora: string; observacoes?: string }, actorId: string, requestId: string, actorRole: string) {
     assertRole(actorRole, ["ADMINISTRADOR", "GESTOR_ALMOXARIFADO"]);
-    const now = new Date(); const dataEntrada = input.dataEntrada ? parseDate(input.dataEntrada) : now; const oldest = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-    if (dataEntrada > now || dataEntrada < oldest) throw errors.badRequest("VALIDATION_ERROR", "Data de entrada deve estar entre hoje e os últimos 90 dias.");
-    const notaFiscal = input.notaFiscal.trim(); const transportadora = input.transportadora.trim(); if (!notaFiscal || !transportadora) throw errors.badRequest("VALIDATION_ERROR", "Nota fiscal e transportadora são obrigatórias.");
-    return this.repo.transaction(async tx => { const org = await tx.findOrganization(input.organizacaoId); if (!org) throw errors.notFound("ORGANIZATION_NOT_FOUND", "Organização não encontrada."); if (!org.ativo) throw errors.conflict("ORGANIZATION_INACTIVE", "Organização desativada não pode receber lotes."); const lot = await tx.create({ organizacaoId: input.organizacaoId, dataEntrada, notaFiscal, transportadora, observacoes: input.observacoes?.trim() ?? "", statusProcessamento: "RECEBIDO", ativo: true }); const actor = await tx.findActorName(actorId); await tx.recordAudit({ atorUsuarioId: actorId, atorNomeSnapshot: actor?.nome, acao: "CRIACAO_LOTE", entidade: "Lote", entidadeId: lot.id, resultado: "SUCESSO", requestId }); return view(lot); }, true);
+    const normalized = normalizeLoteCreateInput(input);
+    return this.repo.transaction(async tx => { const org = await tx.findOrganization(input.organizacaoId); if (!org) throw errors.notFound("ORGANIZATION_NOT_FOUND", "Organização não encontrada."); if (!org.ativo) throw errors.conflict("ORGANIZATION_INACTIVE", "Organização desativada não pode receber lotes."); const lot = await tx.create({ organizacaoId: input.organizacaoId, ...normalized, statusProcessamento: "RECEBIDO", ativo: true }); const actor = await tx.findActorName(actorId); await tx.recordAudit({ atorUsuarioId: actorId, atorNomeSnapshot: actor?.nome, acao: "CRIACAO_LOTE", entidade: "Lote", entidadeId: lot.id, resultado: "SUCESSO", requestId }); return view(lot); }, true);
   }
   async update(id: string, input: { versaoEsperada: number; notaFiscal?: string; transportadora?: string; observacoes?: string; dataEntrada?: string }, actorId: string, requestId: string, actorRole: string) {
     assertRole(actorRole, ["ADMINISTRADOR", "GESTOR_ALMOXARIFADO"]);

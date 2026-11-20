@@ -3,6 +3,10 @@ import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
 export interface EventoAuditoriaInput {
   atorUsuarioId?: string | null;
   atorNomeSnapshot?: string | null;
+  atorTipo?: string;
+  parceiroId?: string | null;
+  apiKeyId?: string | null;
+  organizacaoId?: string | null;
   acao: string;
   entidade: string;
   entidadeId: string;
@@ -20,6 +24,10 @@ export class AuditoriaRepository {
     return tx.eventoAuditoria.create({ data: {
       atorUsuarioId: input.atorUsuarioId ?? null,
       atorNomeSnapshot: input.atorNomeSnapshot ?? null,
+      atorTipo: input.atorTipo ?? (input.parceiroId ? "PARCEIRO" : "USUARIO"),
+      parceiroId: input.parceiroId ?? null,
+      apiKeyId: input.apiKeyId ?? null,
+      organizacaoId: input.organizacaoId ?? null,
       acao: input.acao,
       entidade: input.entidade,
       entidadeId: input.entidadeId,

@@ -105,6 +105,8 @@ model Organizacao {
   versao             Int        @default(1)
   contratos          Contrato[]
   lotes              Lote[]
+  parceiros          ParceiroOrganizacao[]
+  auditorias         EventoAuditoria[]
 
   @@index([razaoSocial])
   @@index([ativo])
@@ -145,6 +147,9 @@ model Lote {
   versao             Int                    @default(1)
   organizacao        Organizacao            @relation(fields: [organizacaoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   equipamentos       Equipamento[]
+  referenciasExternas ReferenciaExternaParceiro[]
+  idempotencias       RequisicaoIdempotencia[]
+  publicId           String                 @unique @default(dbgenerated("('gcl_'::text || replace(gen_random_uuid()::text, '-'::text, ''::text))")) @db.VarChar(40)
 
   @@index([organizacaoId, statusProcessamento])
   @@index([dataEntrada])
@@ -208,9 +213,19 @@ model EventoAuditoria {
   resultado          String    @db.VarChar(30)
   requestId          String?   @db.VarChar(100)
   detalhes            Json?
+  atorTipo            String    @default("USUARIO") @db.VarChar(20)
+  parceiroId          String?   @db.Uuid
+  apiKeyId            String?   @db.Uuid
+  organizacaoId       String?   @db.Uuid
   ator               Usuario?  @relation("AuditoriaAtor", fields: [atorUsuarioId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  parceiro            Parceiro? @relation(fields: [parceiroId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  apiKey              ApiKey?   @relation(fields: [apiKeyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  organizacao         Organizacao? @relation(fields: [organizacaoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@index([instante])
+  @@index([parceiroId, instante])
+  @@index([apiKeyId, instante])
+  @@index([organizacaoId, instante])
   @@index([entidade, entidadeId, instante])
   @@index([atorUsuarioId, instante])
   @@map("eventos_auditoria")
@@ -227,4 +242,99 @@ model ParametroGlobal {
   atualizadoPor                Usuario?  @relation("ParametroAtualizadoPor", fields: [atualizadoPorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@map("parametros_globais")
+}
+
+
+model Parceiro {
+  id                          String                  @id @default(uuid()) @db.Uuid
+  nome                        String                  @db.VarChar(160)
+  descricao                   String?                 @db.VarChar(1000)
+  ativo                       Boolean                 @default(true)
+  escopos                     String[]                @default([])
+  limiteRequisicoesPorMinuto  Int                     @default(60)
+  maxEquipamentosPorSubmissao Int                     @default(100)
+  maxPayloadBytes             Int                     @default(1048576)
+  permiteLoteSemEquipamentos  Boolean                 @default(true)
+  createdAt                   DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt                   DateTime                @updatedAt @db.Timestamptz(3)
+  organizacoes                ParceiroOrganizacao[]
+  apiKeys                     ApiKey[]
+  idempotencias               RequisicaoIdempotencia[]
+  referenciasExternas         ReferenciaExternaParceiro[]
+  auditorias                  EventoAuditoria[]
+
+  @@index([ativo, nome])
+  @@map("parceiros")
+}
+
+model ParceiroOrganizacao {
+  id                   String       @id @default(uuid()) @db.Uuid
+  parceiroId           String       @db.Uuid
+  organizacaoId        String       @db.Uuid
+  identificadorPublico String       @unique @db.VarChar(64)
+  ativo                Boolean      @default(true)
+  revogadoEm           DateTime?    @db.Timestamptz(3)
+  createdAt            DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime     @updatedAt @db.Timestamptz(3)
+  parceiro             Parceiro     @relation(fields: [parceiroId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  organizacao          Organizacao  @relation(fields: [organizacaoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([parceiroId, organizacaoId])
+  @@index([parceiroId, ativo])
+  @@index([organizacaoId, ativo])
+  @@map("parceiros_organizacoes")
+}
+
+model ApiKey {
+  id                          String                  @id @default(uuid()) @db.Uuid
+  parceiroId                  String                  @db.Uuid
+  nome                        String                  @db.VarChar(120)
+  prefixo                     String                  @unique @db.VarChar(40)
+  segredoHash                 String                  @db.Char(64)
+  escopos                     String[]                @default([])
+  limiteRequisicoesPorMinuto  Int?
+  maxEquipamentosPorSubmissao Int?
+  maxPayloadBytes             Int?
+  expiraEm                    DateTime?               @db.Timestamptz(3)
+  revogadaEm                  DateTime?               @db.Timestamptz(3)
+  ultimoUsoEm                 DateTime?               @db.Timestamptz(3)
+  createdAt                   DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt                   DateTime                @updatedAt @db.Timestamptz(3)
+  parceiro                    Parceiro                @relation(fields: [parceiroId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  auditorias                  EventoAuditoria[]
+
+  @@index([parceiroId, createdAt])
+  @@index([parceiroId, revogadaEm, expiraEm])
+  @@map("api_keys")
+}
+
+model RequisicaoIdempotencia {
+  id          String    @id @default(uuid()) @db.Uuid
+  parceiroId  String    @db.Uuid
+  chave       String    @db.VarChar(200)
+  requestHash String    @db.Char(64)
+  loteId      String    @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  parceiro    Parceiro  @relation(fields: [parceiroId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  lote        Lote      @relation(fields: [loteId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([parceiroId, chave])
+  @@index([loteId])
+  @@map("requisicoes_idempotencia")
+}
+
+model ReferenciaExternaParceiro {
+  id          String    @id @default(uuid()) @db.Uuid
+  parceiroId  String    @db.Uuid
+  externalId  String    @db.VarChar(200)
+  requestHash String    @db.Char(64)
+  loteId      String    @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  parceiro    Parceiro  @relation(fields: [parceiroId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  lote        Lote      @relation(fields: [loteId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([parceiroId, externalId])
+  @@unique([parceiroId, loteId])
+  @@index([loteId])
+  @@map("referencias_externas_parceiro")
 }

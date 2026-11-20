@@ -1,97 +1,74 @@
-# Arquitetura proposta — GreenCode AV3
+# Arquitetura — GreenCode AV3
 
-## 1. Estilo arquitetural
+## 1. Base arquitetural
 
-Manter o **monólito modular** da AV2. O processo HTTP e o worker são dois processos de execução do mesmo código-base, não microserviços de domínio independentes. Os módulos continuam separados por responsabilidade e compartilham os serviços/repositórios necessários.
+A AV3 mantém o monólito modular TypeScript/ESM. A aplicação é executada em Node.js 24, utiliza Fastify 5 para HTTP, Prisma 7 para persistência e PostgreSQL 17 como banco principal. Não há separação em microserviços neste incremento.
 
-## 2. Componentes
+Nos módulos operacionais, o fluxo principal permanece:
 
-| Componente | Responsabilidade |
+```text
+Rotas → Controllers → Services → Repositories → Prisma → PostgreSQL
+```
+
+Rotas validam o contrato HTTP; controllers conectam requisições aos casos de uso; services concentram regras de negócio e transações; repositories isolam consultas e gravações. Nas rotas internas, JWT e RBAC continuam sendo os mecanismos de autenticação e autorização.
+
+Os módulos novos de parceiros e API pública seguem `Routes → Controllers → Services`, mas parte dos services acessa Prisma diretamente. Essa diferença em relação ao padrão dos módulos operacionais está documentada como dívida técnica a revisar antes de ampliar esses casos de uso. A transação multi-entidade de submissão deve continuar atômica mesmo se sua persistência for extraída para um repositório dedicado.
+
+## 2. Módulos do primeiro incremento
+
+| Módulo | Responsabilidade |
 |---|---|
-| Fastify API | Rotas internas JWT, rotas públicas API Key, Swagger/OpenAPI |
-| PostgreSQL | Dados transacionais AV2, parceiros, chaves (hash), permissões, registros de idempotência, jobs/resultados analíticos e auditoria |
-| Redis | Transporte/estado operacional da fila BullMQ |
-| Worker | Consome jobs de analytics e relatórios, aplica retry e persiste resultados |
-| Scheduler | Dispara indicadores diários e previsões semanais; pode residir no worker com proteção contra duplicidade |
-| Docker Compose | Ambiente local reproduzível com API, worker, PostgreSQL e Redis |
+| `parceiros` | Administração de parceiros, associações com organizações, escopos, limites e ciclo de vida das API Keys |
+| `integracoes` | Geração/verificação de API Keys, normalização de escopos, hash canônico e rate limiting |
+| `api-publica` | Autenticação externa, autorização, submissão de lotes e consulta de rastreabilidade |
+| `auditoria` | Uso do `EventoAuditoria` existente, ampliado para atores externos |
+| `lotes` | Regras de lote existentes e funções de validação compartilhadas com a submissão pública |
+| `equipamentos` | Regras de equipamento existentes e funções de normalização compartilhadas |
 
-## 3. Fronteiras HTTP e autorização
+A submissão pública é um caso de uso multi-entidade: uma transação serializável coordena lote, equipamentos, referência externa, idempotência e auditoria. O fluxo não executa triagem nem cria movimentações. O lote começa em `RECEBIDO`; equipamentos começam em `AGUARDANDO_TRIAGEM`.
 
-- Rotas internas existentes permanecem protegidas por JWT/RBAC.
-- Rotas públicas novas ficam em prefixo separado e versionado, por exemplo `/api/v1/public`.
-- Rotas administrativas de parceiros ficam em namespace interno/admin e exigem papel Administrador GreenCode.
-- A API pública nunca deve reutilizar automaticamente autorização JWT interna.
-- Toda chave deve estar ativa, não expirada e vinculada a parceiro ativo.
-- **Permissão efetiva = interseção entre os escopos concedidos ao parceiro e os escopos atribuídos à chave.** A chave não pode conceder uma permissão que o parceiro não possui.
-- As permissões da chave devem ser subconjunto dos escopos do parceiro no momento da criação/atualização; além disso, a interseção deve ser recalculada na autorização de cada requisição, para que a redução posterior de permissões do parceiro tenha efeito imediato.
-- Toda operação com dados de organização deve verificar a associação ativa parceiro-organização no servidor. Não confiar em `partnerId` ou `organizacaoId` fornecidos pelo cliente sem validar o vínculo.
-- Rate limit pode ser aplicado por chave e por parceiro; prevalece o limite mais restritivo configurado. Limites de payload e submissões também são aplicados no servidor.
+## 3. Autenticação e autorização
 
-## 4. Fluxo de submissão externa
+As rotas internas e administrativas utilizam JWT. A gestão de parceiros, associações e chaves exige também o papel `ADMINISTRADOR`. JWT não substitui API Key nas rotas públicas, e API Key não concede acesso às rotas internas.
 
-1. API recebe API Key e, quando fornecida, `Idempotency-Key`.
-2. Resolve hash da chave, parceiro, estado, escopos efetivos e limites.
-3. Verifica a organização autorizada e a política de submissão do parceiro.
-4. Valida todo o payload com as regras de domínio existentes da AV2.
-5. Normaliza o payload e calcula hash estável do conteúdo semântico para comparação de idempotência.
-6. Dentro de transação PostgreSQL, verifica os identificadores idempotentes, persiste lote/equipamentos e grava a referência do resultado.
-7. Em falha de validação ou persistência, nenhum registro parcial da submissão pode permanecer.
-8. Registra auditoria sem incluir segredo, hash de API Key ou payload sensível desnecessário.
+A API Key usa prefixo `gc_live_...` e segredo aleatório de 32 bytes codificado em base64url. O segredo completo é exibido somente na criação; o banco armazena o SHA-256 hexadecimal. O prefixo localiza o registro, mas não autentica isoladamente. A comparação do digest utiliza `timingSafeEqual`.
 
-### Regras de idempotência
+A cada requisição, a aplicação verifica segredo, revogação, validade, estado do parceiro, escopo e associação da organização. Os escopos iniciais são `lotes:write` e `rastreabilidade:read`. A autorização efetiva é:
 
-- Mesma `Idempotency-Key` para o mesmo parceiro e mesmo conteúdo normalizado: retornar o resultado originalmente criado, sem duplicar o recurso.
-- Mesma `Idempotency-Key` para o mesmo parceiro e conteúdo diferente: responder HTTP `409 Conflict`.
-- Mesmo `externalId` para o mesmo parceiro e mesmo conteúdo, mesmo com outra `Idempotency-Key`: retornar o recurso original e registrar a nova chave de idempotência como referência ao mesmo resultado.
-- Mesmo `externalId` para o mesmo parceiro e conteúdo diferente: responder HTTP `409 Conflict`.
-- `Idempotency-Key` e `externalId`, quando presentes, são isolados por parceiro; um parceiro não pode bloquear nem consultar identificadores de outro.
+```text
+escoposEfetivos = escoposParceiro ∩ escoposApiKey
+```
 
-## 5. Fluxo público de rastreabilidade
+A redução de permissões do parceiro produz efeito imediatamente para todas as chaves. O identificador público de associação `gci_...` é enviado em `X-Integration-ID`; o identificador público do lote usa prefixo `gcl_...`. O cliente não envia ID interno da organização nem CNPJ como referência de integração.
 
-1. Cliente envia API Key e identifica o lote usando a referência externa associada à integração do parceiro.
-2. API autentica a chave e calcula os escopos efetivos.
-3. API resolve o lote no contexto do parceiro, sem expor nem aceitar como confiável um identificador interno arbitrário.
-4. API confirma que a organização do lote está associada e ativa para o parceiro.
-5. API retorna dados operacionais do lote e, quando autorizado, dados dos equipamentos vinculados: tipo, marca, modelo, estado físico, situação atual e histórico de movimentações.
-6. A resposta omite CNPJ, nomes/dados pessoais, identificadores internos não destinados à integração e informações internas desnecessárias. Nunca inclui API Keys, hashes, tokens ou credenciais.
-7. Consultas fora do escopo ou de organizações não autorizadas não podem revelar se registros de terceiros existem.
+## 4. Rate limiting e limites de submissão
 
-O contrato exato de rota e o formato do identificador externo devem ser definidos na implementação da API, sem expor `codigoBarrasInterno` ou IDs internos da AV2 por conveniência.
+O limitador atual utiliza janela fixa de 60 segundos em memória do processo Fastify. Cada requisição consome contadores do parceiro e da chave; o menor limite é aplicado. O mesmo princípio vale para quantidade de equipamentos e tamanho do payload. Excesso de requisições retorna `429` e `Retry-After`; payload acima do limite retorna `413`.
 
-## 6. Fluxo assíncrono
+**Limitação:** os contadores não são persistidos nem compartilhados entre instâncias e reiniciam com o processo. Portanto, o limite não é distribuído. Antes de escalar horizontalmente será necessário adotar backend compartilhado, como Redis, e revisar a estratégia.
 
-1. Cliente solicita relatório/análise.
-2. API valida autorização e cria registro persistente de tarefa.
-3. Publica job BullMQ/Redis e retorna `202 Accepted` com task ID e rota de status.
-4. Worker processa com retry limitado e backoff.
-5. Worker persiste estado, resultado e metadados; atualiza status.
-6. Cliente consulta status por polling.
-7. Download do resultado exige autenticação e autorização no momento do download; respeita expiração.
+## 5. Idempotência e concorrência
 
-O estado persistido no PostgreSQL é a referência de negócio. Redis/BullMQ é mecanismo de execução, não a única fonte do histórico. Deve existir mecanismo de reconciliação/publicação para execuções registradas no PostgreSQL cujo job não tenha sido publicado no Redis (por exemplo, Transactional Outbox ou solução equivalente). A escolha e a implementação serão detalhadas na fase de filas.
+`Idempotency-Key` e `externalId` são únicos por parceiro e persistidos em estruturas separadas. O hash de conteúdo é SHA-256 de JSON semântico canônico: propriedades de objetos são ordenadas, listas preservam a ordem e campos de domínio são normalizados antes do cálculo. A data de entrada gerada automaticamente não participa do hash quando não foi enviada pelo cliente.
 
-## 7. Segurança e auditoria
+Mesma chave/conteúdo ou mesmo `externalId`/conteúdo reutiliza o lote original. Conteúdo divergente para uma mesma referência retorna `409 Conflict`. A transação serializável e constraints únicas PostgreSQL protegem a integridade sob concorrência. A validação real dessas condições deve ocorrer na suíte de integração PostgreSQL.
 
-- Segredo de API Key gerado criptograficamente, exibido uma única vez e armazenado somente como hash.
-- Identificador/prefixo público não secreto pode localizar a chave; comparação do hash em tempo constante quando aplicável.
-- Revogação individual e expiração opcional.
-- Rate limit por chave/parceiro, além de limites de payload e concorrência.
-- Nunca confiar apenas no `partnerId` enviado pelo cliente.
-- Verificar organização autorizada em cada operação.
-- Não registrar cabeçalho de autenticação, API Key, hash do segredo, senha, token ou URL com credenciais.
-- A auditoria deve ampliar `EventoAuditoria` da AV2, preservando `atorUsuarioId`, `atorNomeSnapshot` e os registros preexistentes. Para eventos externos, acrescentar identificação do tipo de ator, parceiro e chave utilizada; registrar `organizacaoId` quando houver organização afetada.
-- Para ações administrativas, manter o usuário interno como ator. Para operações autenticadas por integração, registrar parceiro e chave; para eventos automáticos, identificar o ator como sistema.
-- Usar FKs opcionais/restritivas para novos atores, sem exigir parceiro ou chave em eventos legados. Não criar uma tabela paralela de auditoria de parceiro sem ADR aprovado.
+## 6. Persistência e relações principais
 
-## 8. Observabilidade e falhas
+Os modelos novos são `Parceiro`, `ParceiroOrganizacao`, `ApiKey`, `RequisicaoIdempotencia` e `ReferenciaExternaParceiro`. O modelo `Lote` recebeu `publicId`. `EventoAuditoria` foi ampliado com `atorTipo`, `parceiroId`, `apiKeyId` e `organizacaoId`, preservando os campos e as relações com usuários internos.
 
-- Correlation/request ID em API e jobs.
-- Estados de job explícitos: pendente, em execução, concluído, falhou e cancelado (se cancelamento for implementado).
-- Retry apenas para falhas transitórias; erros de validação não devem ser repetidos.
-- Backoff exponencial com limite de tentativas e fila de falhas/DLQ ou mecanismo equivalente.
-- Jobs idempotentes: reprocessar não duplica resultado nem submissão.
-- Métricas de fila, duração, tentativas e falhas sem expor dados sensíveis.
+Parceiros, associações e chaves possuem ciclo de vida lógico. A revogação não apaga os registros históricos. As migrations anteriores são preservadas; a evolução é adicionada por migration versionada.
 
-## 9. Escalabilidade
+## 7. Segurança e minimização de dados
 
-Começar com uma instância API e um worker; permitir escalar horizontalmente processos API e workers. Isolar concorrência por parceiro e aplicar limites. Particionar/arquivar resultados históricos apenas quando volume real justificar. Não introduzir microserviços prematuramente.
+A rastreabilidade retorna apenas campos operacionais necessários: identificador público, status e datas do lote, quantidade de equipamentos, histórico operacional permitido e campos de equipamento/movimentação aprovados. A resposta não deve expor CNPJ, dados pessoais, nomes de responsáveis internos, IDs internos, `codigoBarrasInterno`, credenciais, tokens, hashes ou referências externas de terceiros.
+
+A consulta por `externalId` é contextualizada ao parceiro autenticado. A consulta por `publicId` exige associação ativa com a organização do lote. Logs Fastify redigem `X-API-Key`, Authorization, cookies e campos sensíveis configurados; auditoria não registra segredo nem hash.
+
+## 8. OpenAPI e documentação
+
+O Swagger documenta rotas internas, rotas administrativas e endpoints públicos. O esquema `apiKeyAuth` utiliza o header `X-API-Key`; a submissão também exige `X-Integration-ID` e `Idempotency-Key`. A interface está em `/docs/` e o contrato JSON em `/docs/json`.
+
+## 9. Próximas fases
+
+A camada analítica, previsões, Redis/BullMQ, workers, scheduler, retry de jobs, solicitação de relatórios, artefatos, expiração e webhooks permanecem fora deste incremento. As propostas futuras estão identificadas no plano e nos ADRs, sem serem apresentadas como funcionalidades implementadas.

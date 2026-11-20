@@ -15,6 +15,8 @@ import { registerMovimentacoesModule } from "./modules/movimentacoes/movimentaco
 import { registerAuditoriaConsultaModule } from "./modules/auditoria/auditoria-consulta.module.js";
 import { registerRelatoriosModule } from "./modules/relatorios/relatorios.module.js";
 import { registerParametrosModule } from "./modules/parametros/parametros.module.js";
+import { registerParceirosModule } from "./modules/parceiros/parceiros.module.js";
+import { registerApiPublicaModule } from "./modules/api-publica/api-publica.module.js";
 
 
 
@@ -37,7 +39,8 @@ export interface BuildAppOptions { prisma?: PrismaClient; jwtSecret?: string }
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const app = Fastify({
-    logger: process.env.NODE_ENV !== "test" ? { redact: { paths: ["req.headers.authorization", "req.headers.cookie", "req.body.senha", "req.body.senhaAtual", "req.body.novaSenha", "req.body.accessToken", "req.body.password", "req.body.token", "*.senhaHash", "*.JWT_SECRET", "*.DATABASE_URL"], censor: "[REDACTED]" } } : false,
+    bodyLimit: 10_485_760,
+    logger: process.env.NODE_ENV !== "test" ? { redact: { paths: ["req.headers.authorization", "req.headers.cookie", "req.headers.x-api-key", "req.headers['x-api-key']", "req.body.senha", "req.body.senhaAtual", "req.body.novaSenha", "req.body.accessToken", "req.body.password", "req.body.token", "*.senhaHash", "*.segredoHash", "*.segredo", "*.JWT_SECRET", "*.DATABASE_URL"], censor: "[REDACTED]" } } : false,
     disableRequestLogging: process.env.NODE_ENV === "test",
     requestIdHeader: "x-request-id",
     genReqId: () => `req-${randomUUID()}`,
@@ -46,14 +49,14 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(swagger, {
     openapi: {
       info: {
-      title: "GreenCode API do CID",
+      title: "GreenCode API — AV3",
       description:
-        "API REST do sistema de logística reversa GreenCode do CID.\n\n[Ver documento OpenAPI JSON](/docs/json)",
-      version: "0.1.0",
+        "API REST do GreenCode. Rotas internas usam JWT/RBAC; a API pública versionada utiliza API Keys, escopos e associações explícitas parceiro-organização.\n\n[Ver documento OpenAPI JSON](/docs/json)",
+      version: "0.2.0",
     },
       servers: [{ url: "http://localhost:3000" }],
-      tags: [{ name: "Health", description: "Estado técnico do serviço" }, { name: "Autenticação", description: "Login e gestão da sessão" }, { name: "Usuários", description: "Gerenciamento administrativo de usuários" }, { name: "Organizações", description: "Cadastro e histórico organizacional" }, { name: "Contratos", description: "Contratos e renovações" }, { name: "Lotes", description: "Ciclo operacional de lotes" }, { name: "Equipamentos", description: "Cadastro e rastreabilidade dos equipamentos" }, { name: "Movimentações", description: "Histórico de movimentações" }, { name: "Auditoria", description: "Trilha de auditoria" }, { name: "Relatórios", description: "Indicadores operacionais" }, { name: "Parâmetros", description: "Parâmetros globais" }],
-      components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } }, schemas: { UsuarioPublico: { type: "object", additionalProperties: false, required: ["id", "usuario", "nome", "papel", "ativo"], properties: { id: { type: "string", format: "uuid" }, usuario: { type: "string" }, nome: { type: "string" }, papel: { type: "string", enum: ["ADMINISTRADOR", "OPERADOR_CADASTRO", "GESTOR_ALMOXARIFADO", "AUDITOR"] }, ativo: { type: "boolean" }, ultimoAcesso: { type: "string", format: "date-time", nullable: true }, createdAt: { type: "string", format: "date-time" }, updatedAt: { type: "string", format: "date-time" }, versao: { type: "integer" } } } } },
+      tags: [{ name: "Health", description: "Estado técnico do serviço" }, { name: "Autenticação", description: "Login e gestão da sessão" }, { name: "Usuários", description: "Gerenciamento administrativo de usuários" }, { name: "Organizações", description: "Cadastro e histórico organizacional" }, { name: "Contratos", description: "Contratos e renovações" }, { name: "Lotes", description: "Ciclo operacional de lotes" }, { name: "Equipamentos", description: "Cadastro e rastreabilidade dos equipamentos" }, { name: "Movimentações", description: "Histórico de movimentações" }, { name: "Auditoria", description: "Trilha de auditoria" }, { name: "Relatórios", description: "Indicadores operacionais" }, { name: "Parâmetros", description: "Parâmetros globais" }, { name: "Parceiros", description: "Gestão administrativa de parceiros e organizações autorizadas" }, { name: "API Keys", description: "Ciclo de vida seguro das chaves de integração" }, { name: "API Pública", description: "Integração externa versionada com autenticação por API Key" }],
+      components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" }, apiKeyAuth: { type: "apiKey", in: "header", name: "X-API-Key", description: "Segredo de API Key exibido uma única vez na criação. O valor completo não pode ser recuperado." } }, schemas: { UsuarioPublico: { type: "object", additionalProperties: false, required: ["id", "usuario", "nome", "papel", "ativo"], properties: { id: { type: "string", format: "uuid" }, usuario: { type: "string" }, nome: { type: "string" }, papel: { type: "string", enum: ["ADMINISTRADOR", "OPERADOR_CADASTRO", "GESTOR_ALMOXARIFADO", "AUDITOR"] }, ativo: { type: "boolean" }, ultimoAcesso: { type: "string", format: "date-time", nullable: true }, createdAt: { type: "string", format: "date-time" }, updatedAt: { type: "string", format: "date-time" }, versao: { type: "integer" } } } } },
     },
   });
 
@@ -173,6 +176,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       registerAuditoriaConsultaModule(instance, options.prisma as PrismaClient);
       registerRelatoriosModule(instance, options.prisma as PrismaClient);
       registerParametrosModule(instance, options.prisma as PrismaClient);
+      registerParceirosModule(instance, options.prisma as PrismaClient);
+      registerApiPublicaModule(instance, options.prisma as PrismaClient);
     });
   }
 
