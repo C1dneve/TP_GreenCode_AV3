@@ -35,7 +35,9 @@ export function sanitizePublicReportPayload(type: string, payload: unknown): unk
 function csvEscape(value: unknown): string {
   let text = value === null || value === undefined
     ? ""
-    : typeof value === "object"
+    : value instanceof Date
+      ? value.toISOString()
+      : typeof value === "object"
       ? JSON.stringify(value, (_key, nested) => typeof nested === "bigint" ? nested.toString() : nested)
       : typeof value === "bigint"
         ? value.toString()

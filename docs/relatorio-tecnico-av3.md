@@ -33,6 +33,12 @@ A migration `20261120190000_av3_analytics_async` cria os tipos e tabelas novos, 
 
 As FKs e índices foram definidos para relacionamentos, consultas por organização/período/status e expiração. A migration também impõe constraints de formato de relatório e limites numéricos de referências/avaliações.
 
+### Relações e integridade relevantes
+
+O schema mantém `Usuario`, `Organizacao`, `Contrato`, `Lote`, `Equipamento`, `Movimentacao`, `EventoAuditoria` e parâmetros operacionais da AV2. Na integração, `Parceiro` relaciona-se a várias `ApiKey` e a `Organizacao` por `ParceiroOrganizacao` (N:N, identificador público `gci_...`). `RequisicaoIdempotencia` e `ReferenciaExternaParceiro` isolam os identificadores por parceiro e apontam para o lote. O lote mantém `publicId` `gcl_...`; `codigoBarrasInterno` dos equipamentos permanece interno.
+
+Na camada analítica, `HistoricoTriagem` guarda sessão, etapas, responsável, origem e mensurabilidade; `FalhaEquipamento`, `ManutencaoEquipamento` e `HistoricoDepreciacao` fornecem contexto histórico; `ReferenciaRecuperacao` e `AvaliacaoRecuperacao` preservam a fonte e o snapshot financeiro. `ExecucaoAnalise` mantém versões e resultados. No fluxo assíncrono, `RelatorioAssincrono` armazena estado e metadados, `OutboxEvento` garante publicação recuperável e `RateLimitBucket` mantém contadores por chave/janela. `EventoAuditoria` preserva operações internas e pode identificar parceiro, API Key e organização.
+
 ## 4. Histórico operacional de triagem
 
 O módulo `triagem` fornece início, ocorrência, conclusão e consulta cronológica. O início valida o estado do lote e de seus equipamentos, atualiza o lote com controle otimista de versão e registra `TRIAGEM_INICIADA` com responsável e hora. O endpoint legado `POST /api/v1/lotes/:loteId/triagem` foi mantido e adaptado: executa a transição síncrona de forma atômica e registra início/conclusão na mesma sessão histórica, marcada como `origemSessao=LEGADO_AV2` e `mensuravel=false`. O fluxo explícito AV3 usa `origemSessao=AV3` e `mensuravel=true`. A migration aditiva também reclassifica sessões legadas criadas pela primeira entrega, identificando os textos determinísticos gravados pela rota anterior. A conclusão valida a mesma sessão, transiciona equipamentos e lote, registra `TRIAGEM_CONCLUIDA` e mantém a transação atômica. Ocorrências durante a sessão são eventos próprios. A duração efetiva é calculada entre `TRIAGEM_INICIADA` e `TRIAGEM_CONCLUIDA` da mesma sessão. Sessões síncronas AV2 permanecem no histórico e são identificadas separadamente; quando seus timestamps não representam tempo real de trabalho, não entram nas métricas de duração.
@@ -45,14 +51,32 @@ Implementado em `OperationalEfficiencyService`.
 
 1. O repository recupera eventos de triagem e lotes da organização/origem solicitadas. A seleção do período considera a data de conclusão; o lote pode ter entrado antes do período.
 2. Os eventos são agrupados por `sessaoId` e relacionados ao `loteId`.
-3. A conclusão válida é o evento `TRIAGEM_CONCLUIDA` de uma sessão com início válido, para lote cujo estado persistido é `TRIAGEM_CONCLUIDA`. Se houver sessões concluídas históricas múltiplas para o mesmo lote, o último evento concluído define o fim do ciclo total, enquanto todas as sessões AV3 válidas anteriores contribuem para o tempo efetivo.
-4. Tempo total: `TRIAGEM_CONCLUIDA.ocorridoEm - Lote.dataEntrada`.
-5. Tempo efetivo: `TRIAGEM_CONCLUIDA.ocorridoEm - TRIAGEM_INICIADA.ocorridoEm`.
-6. Tempo de espera: tempo total menos tempo efetivo. Datas invertidas, sessões sem conclusão e durações negativas não entram nas médias.
+3. Para o ciclo total, considera-se o evento `TRIAGEM_CONCLUIDA` associado a um lote cujo estado persistido é `TRIAGEM_CONCLUIDA`; o início da sessão não é requisito para medir entrada→conclusão. Se houver sessões concluídas históricas múltiplas para o mesmo lote, o último evento concluído define o fim do ciclo total. Para tempo efetivo, cada sessão AV3 precisa ter início e conclusão válidos, com início posterior à entrada do lote e cronologia não invertida.
+4. Tempo total: `última TRIAGEM_CONCLUIDA.ocorridoEm - Lote.dataEntrada`, contado uma única vez por lote.
+5. Tempo efetivo: união dos intervalos válidos `TRIAGEM_INICIADA.ocorridoEm → TRIAGEM_CONCLUIDA.ocorridoEm`; intervalos sobrepostos não são duplicados.
+6. Tempo de espera: tempo total menos a união do tempo efetivo. Lotes sem sessão AV3 mensurável permanecem na amostra do ciclo total, mas não nas médias de tempo efetivo/espera; datas invertidas, sessões sem conclusão e durações negativas não entram nas médias de sessão.
 7. O resultado apresenta médias/medianas, percentis, mínimo/máximo, agrupamentos por operador, organização e período, lotes pendentes e sessões incompletas. Cada lote é contado uma única vez no ciclo total.
 8. Consultas acima de 20.000 registros falham explicitamente com `ANALYTICS_DATASET_TOO_LARGE`, sem persistir resultado parcial.
 
 Intervalos efetivos sobrepostos são unidos; a parte sobreposta é atribuída à sessão que começou primeiro, evitando dupla contagem. Lotes concluídos apenas com sessão legada continuam contribuindo para o tempo total, mas não para tempo efetivo/espera, que permanecem indisponíveis quando não mensuráveis. A execução é persistida em `execucoes_analise` com método `Ciclo de lote (entrada→conclusão), união de sessões efetivas e espera` e versão de modelo `3.0.0`. Sessões legadas síncronas permanecem separadas e não contaminam os tempos quando não mensuráveis.
+
+### Comparativos internos por operador
+
+O agrupamento `porOperador` preserva os campos anteriores e acrescenta indicadores com denominadores explícitos:
+
+| Campo | Interpretação | Amostra/denominador |
+|---|---|---|
+| `tempoEfetivoTotalMinutos` | Soma exclusiva dos minutos atribuídos ao operador após união dos intervalos. | Soma das sessões AV3 válidas do operador. |
+| `sessoesConsideradas` | Quantidade de sessões completas, mensuráveis e com cronologia válida que entraram no agrupamento. | Contagem de sessões. |
+| `sessoesComAtividade` | Sessões com contribuição exclusiva maior que zero. | Contagem de sessões ativas. |
+| `observacoesTempoPorSessao` | Quantidade de valores usados nas estatísticas por sessão. | Igual à quantidade de sessões consideradas; contribuição zero permanece na amostra. |
+| `tempoEfetivoMedioPorSessaoMinutos` / `tempoEfetivoMedianoPorSessaoMinutos` | Média e mediana dos minutos exclusivos por sessão. | `observacoesTempoPorSessao`. |
+| `lotesAtendidos` | Número de lotes distintos com participação válida do operador, inclusive contribuição zero por sobreposição integral. | Lotes distintos. |
+| `observacoesTempoPorLote` | Quantidade de lotes com participação válida usada na média por lote. | Lotes distintos com sessões consideradas. |
+| `tempoMedioParticipacaoPorLoteMinutos` | Média da soma exclusiva do operador em cada lote. | `observacoesTempoPorLote`. |
+| `participacaoPercentualTempoEfetivo` | Parcela do tempo efetivo total dos lotes elegíveis atribuída ao operador. | Um percentual agregado; indisponível quando o denominador total é zero. `observacoesParticipacaoPercentual` informa quantos lotes com sessão AV3 mensurável compõem a base global do denominador. |
+
+Sessões legadas AV2, sessões sem início, cronologia inválida e sessões sem conclusão não alimentam os comparativos. Uma sessão AV3 válida totalmente coberta por sessão iniciada antes contribui com zero minuto, sem desaparecer da contagem de observações. A regra de precedência é temporal: a sessão que iniciou primeiro recebe a parte sobreposta. Os tempos exclusivos de operadores diferentes, somados, correspondem ao tempo efetivo sem duplicação. Esses indicadores descrevem distribuição de atividade e não constituem ranking de desempenho individual.
 
 ## 6. Indicador de recuperação financeira/rentabilidade
 
@@ -78,6 +102,16 @@ Resultados, filtros, método, versão, número de observações, confiabilidade 
 
 `UsefulLifeBacktestingService` consulta snapshots históricos de `VIDA_UTIL_REMANESCENTE` e eventos de auditoria `ALTERACAO_ESTADO_FISICO` cujo detalhe `para` seja `INSERVIVEL`. Uma previsão só é candidata quando sua data estimada já foi alcançada e a transição real é posterior ao instante de execução do modelo. A comparação usa a primeira transição posterior por equipamento real (`demonstracao=false`), calcula erro assinado em dias, erro absoluto médio e erro percentual absoluto médio (MAPE) usando o horizonte previsto como denominador. Previsões maduras sem evento observado e previsões ainda não maduras são contabilizadas separadamente, sem serem tratadas como acerto ou erro. O resultado é persistido como `BACKTESTING_VIDA_UTIL`; a nova enumeração é adicionada por migration aditiva. A limitação central é que a ausência de transição auditada não prova que o equipamento continuou utilizável: pode representar censura ou falta de registro.
 
+
+### 7.1 Justificativa da `simple-statistics`
+
+O módulo `src/modules/analytics/statistics.ts` concentra o uso da biblioteca `simple-statistics` em operações que aparecem diretamente nas análises: `mean` para médias, `median` para medianas, `quantileSorted` para quantis/percentis e `linearRegression`/`linearRegressionLine` para ajustar e avaliar a reta de regressão. As amostras de quantis são ordenadas antes da chamada; a biblioteca calcula o quantil com a convenção de interpolação padrão da função utilizada. O código de serviço calcula explicitamente o R² a partir dos resíduos e da soma total dos quadrados, limitando o resultado ao intervalo de 0 a 1 e tratando separadamente amostras com variância nula.
+
+Na previsão de vida útil, cada ponto representa `(idade em meses, valor estimado)`. A regressão linear OLS ajusta `valor = intercepto + inclinação × idade`; a extensão da reta até valor zero estima uma idade de referência e, pela diferença com a idade atual, os meses remanescentes. Essa projeção só é disponibilizada quando os critérios do serviço são atendidos: ao menos três avaliações válidas em datas distintas, valor de aquisição positivo, ausência de avaliações futuras, equipamento não inservível, inclinação negativa, `R² >= 0,35` e cruzamento projetado ainda futuro. A penalização de falhas e o crédito de manutenção são heurísticas do domínio, não funcionalidades estatísticas da biblioteca.
+
+A escolha é adequada ao escopo porque oferece funções estatísticas específicas e legíveis, reduz código matemático próprio, facilita a revisão por pares e integra-se ao projeto TypeScript sem exigir um ambiente numérico especializado. Uma biblioteca genérica como `mathjs` acrescentaria uma camada de operações algébricas mais ampla do que a necessidade atual: o sistema não executa álgebra simbólica, matrizes gerais ou pipelines matemáticos multidisciplinares. Não foi realizado benchmark comparativo e, portanto, não se afirma vantagem de desempenho quantitativa.
+
+A decisão também tem limites: a biblioteca não corrige dados ruins, não escolhe variáveis causais, não valida premissas do domínio e não transforma OLS em previsão probabilística. Três observações constituem apenas um mínimo operacional, não garantia de representatividade. Tendências não lineares, mudanças tecnológicas, inflação, diferenças entre categorias e períodos sem avaliações podem tornar a reta inadequada. O R² mede ajuste aos pontos disponíveis e pode ser alto em uma série pequena; o índice de confiabilidade do GreenCode combina R² e heurísticas de condição/falhas/manutenções e não é uma probabilidade calibrada. O resultado deve ser interpretado como estimativa de apoio à decisão e validado com histórico real antes de uso operacional de alto impacto.
 
 ## 8. Dados demonstrativos
 
@@ -119,7 +153,47 @@ O caminho recomendado é Docker Compose, que inicia PostgreSQL, Redis, API e wor
 
 No Windows 10+ recomenda-se Docker Desktop/WSL2; no Ubuntu 24.04.03+ recomenda-se Docker Engine e plugin Compose. O `.env.example` contém as opções de intervalo dos schedulers. Configure no `.env` local as variáveis `REDIS_URL`, `REPORTS_DIR`, `REPORT_EXPIRATION_DAYS`, `WORKER_CONCURRENCY` e `ANALYTICS_*_INTERVAL_MS`; o Compose injeta seus próprios valores nos containers.
 
-## 13. Limitações e trade-offs
+## 13. Plano de escalabilidade
+
+### Arquitetura e limites atuais
+
+A implementação atual é um monólito modular Fastify 5, com PostgreSQL como banco de negócio e persistência de estado. As rotas públicas usam API Keys e escopos efetivos; o rate limit real utiliza contadores atômicos no PostgreSQL, em janela fixa de 60 segundos, por parceiro e por API Key, portanto o contador é compartilhado pelas instâncias que usam o mesmo banco. Redis 7/BullMQ 5 coordena filas e schedulers; um worker separado consome tarefas. A Outbox é gravada na mesma transação da solicitação, evitando aceitar tarefa sem persistir o evento que a publicará. O processamento é limitado por payload (10 MiB no Fastify, além do limite por parceiro/chave), quantidade máxima de equipamentos por submissão e consultas analíticas/relatórios de até 20.000 registros. A concorrência do worker é configurável (padrão 3, máximo 10). Os arquivos de relatório são gravados atualmente em filesystem local/volume Docker persistente; o PostgreSQL guarda metadados, expiração, tamanho e hash SHA-256.
+
+Esses são mecanismos presentes no código. Não existe, nesta entrega, teste de carga que comprove capacidade para centenas ou milhares de parceiros. O armazenamento por volume local também não é compartilhado automaticamente entre hosts.
+
+### Etapa 1 — centenas de parceiros
+
+| Evolução proposta | Problema que resolve e justificativa | Impacto e estado |
+|---|---|---|
+| Executar múltiplas instâncias da API atrás de load balancer. | Distribui tráfego HTTP e permite manutenção/recuperação de instâncias. | Proposta futura. A autenticação e o rate limit no PostgreSQL já compartilham o estado necessário; sessões locais ou caches adicionados no futuro precisariam ser removidos ou externalizados. |
+| Pooling e limites de conexões PostgreSQL. | Evita que réplicas HTTP e workers esgotem conexões do banco. | Prisma/driver já usa PostgreSQL; dimensionar pool, timeouts e, se necessário, PgBouncer exigirá métricas de conexões e testes de carga. Proposta futura. |
+| Escalar workers horizontalmente. | Absorve aumento de relatórios/análises sem bloquear requisições. | A separação API/worker, Outbox e IDs estáveis já existem; adicionar instâncias e ajustar `WORKER_CONCURRENCY` requer acompanhar latência, tentativas e profundidade de fila. A escala horizontal é proposta, não validada neste ambiente. |
+| Limites e visibilidade por parceiro. | Evita que um consumidor monopolize recursos. | Limites por parceiro/chave, escopos e limites de payload já existem. Painéis/alertas de consumo, cotas por tipo de tarefa e políticas adaptativas ficam para evolução. |
+| Monitorar filas e banco. | Detecta crescimento de backlog, falhas e pressão sobre conexões antes de degradar a API. | Logs e estado persistido já são gerados; métricas, alertas e dashboards dedicados são futuros. |
+
+### Etapa 2 — milhares de parceiros
+
+| Evolução proposta | Problema que resolve e justificativa | Impacto e estado |
+|---|---|---|
+| Revisar índices com `EXPLAIN (ANALYZE, BUFFERS)` e métricas reais. | Consultas por organização, chave, período, status e expiração podem tornar-se gargalos. | Índices de integridade/consulta já existem nas migrations; otimizações só devem ocorrer após medir consultas representativas. Futura. |
+| Paginação, leitura por cursor e processamento em chunks. | Reduz memória e tempo de transações para conjuntos maiores que os limites atuais. | Hoje há limite explícito de 20.000 registros. Streaming/paginação em relatórios e análises é evolução futura, com atenção a consistência de snapshot e backpressure. |
+| Considerar Redis para rate limiting. | Reduz escritas de alta frequência no PostgreSQL se o contador tornar-se gargalo medido. | Hoje PostgreSQL é a fonte compartilhada e implementação efetiva. Migrar para Redis exigiria estratégia atômica, persistência/HA, política de fallback e observabilidade; só fazer após evidência de saturação. |
+| Object storage compartilhado para relatórios. | Disponibiliza o mesmo arquivo para workers/API em hosts diferentes e desacopla volume de disco. | Hoje arquivos estão em filesystem/volume local, com checksum e expiração. Adotar S3 compatível ou equivalente requer credenciais, política de retenção, URLs/download autenticado e migração; futuro. |
+| Mais workers com concorrência limitada. | Aumenta vazão mantendo limite de recursos por tarefa. | BullMQ já permite múltiplos consumidores; aumentar quantidade/concorrência exige medir CPU, memória, conexões, taxa de falhas e tempo de fila. Futuro. |
+| Observabilidade de ponta a ponta. | Correlaciona requisição, parceiro, Outbox, job, execução e arquivo para localizar gargalos. | Request IDs e logs estruturados existem; tracing distribuído, métricas Prometheus/OpenTelemetry e alertas são propostas futuras. |
+| Isolamento de dados e controle de acesso. | Reduz risco de vazamento em consultas multi-tenant e facilita auditoria. | O código já verifica parceiro, API Key, escopos e associação ativa; índices, revisão de consultas e testes de isolamento devem evoluir junto com volume. Particionamento ou bancos separados por tenant não são adotados hoje. |
+| Backpressure e cotas de filas. | Evita crescimento ilimitado de tarefas diante de picos. | Há limite de relatórios pendentes por organização e limites de tamanho/volume; cotas por parceiro, rejeição antecipada e circuit breakers são evoluções futuras. |
+
+### Etapa 3 — disponibilidade e evolução estrutural
+
+1. **Métricas de capacidade e testes de carga:** definir SLOs, throughput, p95/p99, taxa de erros, conexões PostgreSQL, uso de CPU/memória, fila/idade do job e custo de armazenamento. Testar cargas graduais com distribuição realista por parceiro e comportamento de pico. Não há resultados de benchmark/carga nesta entrega.
+2. **Alta disponibilidade:** planejar PostgreSQL gerenciado com réplica/failover e backups verificados; Redis com persistência/replicação adequadas ao papel de fila; balanceador e múltiplas réplicas stateless de API/worker; object storage redundante. Cada componente exige plano de failover e limites conhecidos.
+3. **Recuperação:** ensaiar restauração de backup, reprocessamento idempotente da Outbox, recuperação de leases, retenção de relatórios e procedimentos para jobs órfãos. Definir RPO/RTO com base em requisitos do negócio.
+4. **Separação de serviços:** manter o monólito modular enquanto módulos compartilham domínio/transações e a equipe consegue operá-lo. Extrair serviço apenas quando houver necessidade independente comprovada de escala, ciclo de entrega, isolamento de falhas ou ownership — por exemplo, workers de relatórios. A separação adiciona contratos remotos, deploy, tracing e consistência distribuída; não é um objetivo por si só.
+
+O plano é incremental: medir primeiro, remover gargalos demonstrados depois. Nenhuma capacidade futura descrita acima deve ser interpretada como implementada ou comprovada por teste de carga nesta versão.
+
+## 14. Limitações e trade-offs
 
 - A previsão de vida útil usa OLS e ajustes heurísticos sobre dados existentes; não constitui previsão probabilística calibrada. A validade aumenta com avaliações periódicas e histórico real representativo.
 - A estimativa de recuperação depende das referências de valor por kg e percentual recuperável. A tabela-base evita ausência total de resultado, mas tem caráter estimativo e deve ser substituída/atualizada por referências locais documentadas.
@@ -127,27 +201,40 @@ No Windows 10+ recomenda-se Docker Desktop/WSL2; no Ubuntu 24.04.03+ recomenda-s
 - As análises recorrentes são agendadas pelo BullMQ com IDs estáveis; o PostgreSQL é a fonte de verdade para os resultados e para a chave idempotente de cada execução. A indisponibilidade de Redis impede novos jobs automáticos até a recuperação do worker, mas não apaga o histórico já persistido.
 - O armazenamento está em volume de filesystem. Para múltiplos hosts, seria necessária uma solução de objetos compartilhada com política equivalente de checksum/expiração.
 
-## 14. Evidências de validação e limitações do ambiente
+## 15. Rastreabilidade resumida dos requisitos AV3
 
-Nesta revisão foram alterados serviços analíticos, projeções públicas, sanitização de relatórios, testes unitários, documentação e configuração da porta publicada do PostgreSQL. Foram adicionados testes unitários para o ciclo entrada→conclusão/triagem/espera, backtesting e remoção de identificadores internos em projeções públicas. Os testes já existentes foram ajustados para a nova semântica da eficiência operacional.
+| Pilar | Requisito resumido | Implementação de referência | Evidência a executar |
+|---|---|---|---|
+| Analítico | Ciclo do lote, tempo efetivo, espera, agrupamento por operador e período. | `OperationalEfficiencyService`, `analytics.repository.ts` e histórico de triagem. | Testes unitários de intervalos e execução com PostgreSQL de teste. |
+| Analítico | Estimativa de recuperação por tipo/estado/marca/modelo e comparação com valor realizado. | `ProfitabilityService`, referências e avaliações de recuperação. | Testes numéricos e integração de persistência. |
+| Analítico | Vida útil por depreciação, falhas, manutenções e histórico/backtesting. | `UsefulLifeService`, `simple-statistics` e auditoria. | Testes OLS/indisponibilidade e integração de histórico. |
+| API pública | API Keys, escopos, versionamento, rate limit, submissão e rastreabilidade. | `parceiros`, `integracoes` e `api-publica`. | HTTP positivo/negativo e testes de isolamento/concorrência no PostgreSQL. |
+| Assíncrono | Solicitação com task ID, status, retry, relatório e download. | `relatorios-async`, Outbox, BullMQ e worker. | Integração com Redis/PostgreSQL, falha, retry, recuperação e expiração. |
+| Segurança e operação | Auditoria, autenticação, minimização de DTOs, documentação e ambiente reproduzível. | `auth`, `auditoria`, Swagger/OpenAPI, Compose e guias. | Verificação de OpenAPI, inicialização, testes negativos e execução em ambiente limpo. |
 
-**Validação executada nesta revisão:**
+A matriz detalhada de IDs funcionais (ANA/API/PAR/INT/JOB/REL/AUD/OPS/TECH/COMP) foi sintetizada a partir do documento de requisitos e das histórias de usuário. A implementação presente no código não substitui a execução dos critérios de aceite de banco, fila, concorrência e isolamento.
 
-| Verificação | Comando/ação | Resultado |
+## 16. Evidências de validação e limitações do ambiente
+
+A árvore de código contém testes unitários, testes de integração com salvaguarda para banco dedicado, e um comando específico de demonstração. O comando `npm run test:demonstracao` constrói o projeto, executa cenários determinísticos, imprime entrada/esperado/obtido e gera `docs/evidencias-testes-av3.md`. Os cenários que usam repositório, cliente Prisma, controller ou limitador simulados são identificados. O cenário público executa o `createApiKeyAuthenticator` e a validação criptográfica de chave reais com registro Prisma simulado; isso não comprova persistência ou revogação consultada em PostgreSQL, nem integração Redis/BullMQ.
+
+**Verificações realizadas nesta sessão de refinamento:**
+
+| Verificação | Comando/ação | Resultado observado |
 |---|---|---|
-| Leitura dos ZIPs AV2/AV3 e inventário | inspeção dos arquivos compactados | PASSOU |
-| Comparação das três migrations-base AV2 x AV3 | comparação textual após normalização de CRLF/LF | PASSOU — conteúdo equivalente |
-| Instalação de dependências | `npm ci --ignore-scripts --no-audit --no-fund` | BLOQUEADO POR AMBIENTE — execução excedeu o limite de tempo; registry não concluiu a instalação |
-| Build | `npm run build` | BLOQUEADO POR AMBIENTE — `prisma: not found` porque `npm ci` não concluiu |
-| Prisma validate/generate, migrations e seed | scripts npm correspondentes | NÃO EXECUTADO — Prisma CLI ausente |
-| Testes unitários e integração | `npm test` e `npm run test:integration` | NÃO EXECUTADO — dependências ausentes; além disso, Node 22 no ambiente não atende ao requisito Node 24 |
-| PostgreSQL/Redis/worker | Docker Compose e testes reais | BLOQUEADO POR AMBIENTE — Docker e serviços não disponíveis |
-| Compatibilidade Windows/Ubuntu | execução nativa em ambos os sistemas | NÃO EXECUTADO |
+| Inventário do repositório e documentos | listagem e leitura dos arquivos fonte/documentação | CONCLUÍDO — análise estática realizada. |
+| Runtime | `node --version` | BLOQUEADO — runtime disponível `v22.16.0`; projeto exige `>=24 <25`. |
+| Instalação npm | `npm ci --ignore-scripts --no-audit --no-fund --prefer-offline` | BLOQUEADO — excedeu 120 segundos; npm também emitiu `EBADENGINE` para Node 22. |
+| Dependências de build | verificação de `node_modules` | BLOQUEADO — dependências locais não ficaram disponíveis para build. |
+| Docker e serviços | `command -v docker`, verificação de PostgreSQL/Redis | BLOQUEADO — Docker CLI e serviços de banco/fila não estão disponíveis nesta sessão. |
+| Prisma validate/generate e migrations | `npm run prisma:validate`, `npm run prisma:generate`, `npm run db:deploy` | BLOQUEADOS — todos retornaram `sh: 1: prisma: not found` (exit 127). |
+| Build e testes | `npm run build`, `npm run test:unit`, `npm run test:integration`, `npm run test:demonstracao` | BLOQUEADOS — etapa inicial do build interrompida por `prisma: not found` (exit 127); nenhum teste foi executado. |
+| Parser TypeScript estático | API do compilador TypeScript global percorreu todos os `src/**/*.ts` | CONCLUÍDO — 119 arquivos analisados, zero diagnósticos sintáticos. Não substitui type-check/build do projeto. |
+| Sintaxe JavaScript da sidebar | `node --check src/docs/greencode-swagger-sidebar.js` | CONCLUÍDO — sem erros de sintaxe no runtime disponível. |
+| JSON de configuração | `package.json` e `package-lock.json` carregados com `JSON.parse` | CONCLUÍDO — ambos são JSON válidos. |
+| Type-check global | `tsc -p tsconfig.json --noEmit --pretty false` | BLOQUEADO — TypeScript global não encontrou declarações/dependências (`@types/node`, `pg` e tipos transitivos) após instalação npm incompleta. |
+| Inicialização da API/worker | `npm start`, `npm run start:worker` | NÃO INICIADOS — `dist/src/server.js` e `dist/src/worker.js` não existem porque o build não foi executado. |
+| Docker Compose | `docker compose config -q` | BLOQUEADO — `docker: command not found` (exit 127). |
+| OpenAPI JSON e screenshots | requisições HTTP à API real | NÃO EXECUTADOS — a aplicação não foi iniciada; `/docs/json` e `/docs/` não foram inspecionados via HTTP. |
 
-O ambiente disponível possui Node.js `v22.16.0`; o projeto exige `>=24 <25`. Docker, PostgreSQL CLI e serviços Redis/PostgreSQL não estão disponíveis. A tentativa de `npm ci` excedeu o limite de execução e não instalou o Prisma CLI/TypeScript locais. Por isso, não há evidência de build, typecheck, validação Prisma, migrations, seed, worker ou testes integrados nesta revisão. Não se declara homologação.
-
-As três migrations iniciais AV2 (`20261020200000_init`, `20261021170000_equipamento_lote_opcional` e `20261022080000_usuario_auth_version`) possuem conteúdo equivalente na AV3 após normalização de finais de linha. As migrations AV3 permanecem aditivas; a nova migration `20261121120000_useful_life_backtesting` acrescenta somente o valor `BACKTESTING_VIDA_UTIL` ao enum `TipoAnalise`. A instalação limpa e a migração AV2→AV3 ainda precisam ser executadas em bancos descartáveis separados.
-
-O `package-lock.json` foi preservado sem alteração. Não foi possível regenerá-lo com segurança sem a instalação completa das dependências; qualquer atualização parcial seria inadequada. A próxima homologação deve executar em Node 24 com acesso ao registry: `npm ci`, `npm run prisma:validate`, `npm run prisma:generate`, `npm run db:deploy`, `npm run db:seed`, `npm run build`, `npm test` e `npm run test:integration`. Os testes de integração devem utilizar exclusivamente o banco `greencode_test` fornecido pelo perfil `tests`; nunca o banco de desenvolvimento.
-
-Até essa execução, a implementação é uma primeira rodada de correções estáticas e testes adicionados, não uma entrega 100% homologada.
+A tentativa de baixar Node.js 24 também não foi concluída por falha de resolução DNS do host de distribuição. Portanto, não há resultado de build, typecheck, Prisma validate/generate, migrations, testes unitários/integração/demonstração nem validação real do JSON OpenAPI nesta sessão. Não se declara homologação. Para concluir essas verificações, use Node.js 24 e instale as dependências (`npm ci`), ou execute o Compose em uma máquina com Docker e acesso às imagens/registry. A URL local configurada no projeto é `http://localhost:3000`; Swagger `/docs/`, OpenAPI `/docs/json` e health `/health` só ficam disponíveis enquanto a API estiver em execução.

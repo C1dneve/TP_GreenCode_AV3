@@ -1,12 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest, preParsingHookHandler } from "fastify";
 import { Transform } from "node:stream";
 import { DomainError, errors } from "../../shared/domain-error.js";
-import { InMemoryRateLimiter } from "../integracoes/rate-limiter.js";
 import type { IntegrationScope } from "../integracoes/scopes.js";
 import type { ApiPublicaController } from "./api-publica.controller.js";
 import type { IntegrationIdentity } from "./integration-auth.js";
 
-const err = { $ref: "Erro#" } as const;
 const publicEquipment = {
   type: "object", additionalProperties: false,
   required: ["tipo", "marca", "modelo", "estadoFisico", "statusRastreamento"],
@@ -65,6 +63,15 @@ const lotBody = {
   },
 } as const;
 
+
+function errorResponse(description: string, code: string, message: string) {
+  return {
+    description, type: "object", required: ["error"],
+    properties: { error: { type: "object", required: ["code", "message"], properties: { code: { type: "string" }, message: { type: "string" }, details: {}, requestId: { type: "string" } } } },
+    examples: [{ error: { code, message, requestId: "req-exemplo" } }],
+  };
+}
+
 const enforceRawPayloadLimit: preParsingHookHandler = (request, _reply, payload, done) => {
   const identity = request.integrationIdentity as IntegrationIdentity | undefined;
   if (!identity) {
@@ -117,7 +124,7 @@ export function registerApiPublicaRoutes(
   app: FastifyInstance,
   controller: ApiPublicaController,
   authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>,
-  limiter: { consume: (key: string, limit: number) => Promise<import("../integracoes/rate-limiter.js").RateLimitResult> | import("../integracoes/rate-limiter.js").RateLimitResult } = new InMemoryRateLimiter(),
+  limiter: { consume: (key: string, limit: number) => Promise<import("../integracoes/rate-limiter.js").RateLimitResult> },
 ) {
   const submitPre = publicPreHandler("lotes:write", limiter);
   const readPre = publicPreHandler("rastreabilidade:read", limiter);
@@ -127,16 +134,23 @@ export function registerApiPublicaRoutes(
     description: "Requer API Key com escopo lotes:write, X-Integration-ID ativo e Idempotency-Key. A organização é resolvida pelo identificador de integração; IDs internos e CNPJ não são aceitos.",
     security: [{ apiKeyAuth: [] }], headers: {
       type: "object", additionalProperties: true,
-      required: ["x-integration-id", "idempotency-key"],
+      required: ["x-api-key", "x-integration-id", "idempotency-key"],
       properties: {
-        "x-integration-id": { type: "string", description: "Identificador público parceiro-organização." },
-        "idempotency-key": { type: "string", minLength: 1, maxLength: 200 },
+        "x-api-key": { type: "string", description: "API Key emitida pelo administrador e cadastrada no botão Authorize." },
+        "x-integration-id": { type: "string", description: "Identificador público parceiro-organização ativo. Exemplo: gci_0123456789abcdef0123456789abcdef", examples: ["gci_0123456789abcdef0123456789abcdef"] },
+        "idempotency-key": { type: "string", minLength: 1, maxLength: 200, description: "Chave fornecida pelo cliente para evitar duplicidade em reenvios.", examples: ["erp-lote-2026-0001"] },
       },
+      examples: [{ "x-api-key": "gc_live_COLOQUE_SUA_CHAVE", "x-integration-id": "gci_0123456789abcdef0123456789abcdef", "idempotency-key": "erp-lote-2026-0001" }],
     },
-    body: { ...lotBody, examples: [{ externalId: "erp-lote-2026-0001", notaFiscal: "NF-0001", transportadora: "Transportadora Exemplo", observacoes: "Lote de equipamentos usados", equipamentos: [{ tipo: "NOTEBOOK", marca: "Exemplo", modelo: "NB-14", anoFabricacao: 2024, estadoFisico: "BOM_ESTADO", pesoQuilogramas: "2.500" }] }] },
+    body: { ...lotBody, examples: [{ externalId: "erp-lote-2026-0001", notaFiscal: "NF-0001", transportadora: "Transportadora Exemplo", observacoes: "Lote de equipamentos usados", equipamentos: [{ tipo: "NOTEBOOK", marca: "Exemplo", modelo: "NB-14", anoFabricacao: 2024, estadoFisico: "BOM_ESTADO", pesoQuilogramas: "2.500", valorAquisicao: "3500.00" }] }] },
     response: {
       201: { ...publicSubmissionResponse, examples: [{ identificadorPublico: "gcl_0123456789abcdef0123456789abcdef", externalId: "erp-lote-2026-0001", status: "RECEBIDO", dataEntrada: "2026-11-20T12:00:00.000Z", criadoEm: "2026-11-20T12:00:00.000Z", quantidadeEquipamentos: 1, equipamentos: [{ tipo: "NOTEBOOK", marca: "Exemplo", modelo: "NB-14", estadoFisico: "BOM_ESTADO", statusRastreamento: "AGUARDANDO_TRIAGEM" }] }] },
-      400: err, 401: err, 403: err, 409: err, 413: err, 429: err,
+      400: errorResponse("Corpo inválido ou headers obrigatórios ausentes.", "VALIDATION_ERROR", "A requisição contém campos inválidos."),
+      401: errorResponse("API Key ausente, inválida, expirada ou revogada.", "INVALID_API_KEY", "API Key não autenticada."),
+      403: errorResponse("A chave não possui lotes:write ou o vínculo não está ativo.", "FORBIDDEN", "Escopo ou associação insuficiente."),
+      409: errorResponse("A Idempotency-Key foi reutilizada com conteúdo diferente.", "IDEMPOTENCY_CONFLICT", "A chave de idempotência já foi utilizada com outra requisição."),
+      413: errorResponse("Payload acima do limite configurado para a API Key.", "PAYLOAD_TOO_LARGE", "Payload excede o limite efetivo da API Key."),
+      429: errorResponse("Limite por parceiro ou API Key excedido; consulte Retry-After.", "RATE_LIMIT_EXCEEDED", "Limite de requisições por minuto excedido."),
     },
   } }, async (request, reply) => {
     const integrationId = request.headers["x-integration-id"];
@@ -147,18 +161,30 @@ export function registerApiPublicaRoutes(
   });
 
   app.get("/api/v1/public/rastreabilidade/lotes/:identificadorPublico", { preHandler: [authenticate, readPre], schema: {
-    tags: ["API Pública"], summary: "Consulta rastreabilidade pelo identificador público GreenCode",
-    description: "Requer API Key com escopo rastreabilidade:read e associação ativa do parceiro à organização do lote.", security: [{ apiKeyAuth: [] }],
-    headers: { type: "object", required: ["x-api-key"], properties: { "x-api-key": { type: "string" } } },
-    params: { type: "object", required: ["identificadorPublico"], properties: { identificadorPublico: { type: "string", minLength: 1, maxLength: 40 } } },
-    response: { 200: publicTrackingResponse, 401: err, 403: err, 404: err, 429: err },
+    tags: ["Rastreabilidade"], summary: "Consulta rastreabilidade pelo identificador público GreenCode",
+    description: "Consulta dados operacionais e movimentações públicas do lote. Requer API Key com escopo rastreabilidade:read e associação ativa do parceiro à organização do lote. Responde 401 para chave inválida, 403 para escopo insuficiente, 404 quando o lote não existe no escopo do parceiro e 429 quando o limite por minuto é atingido.", security: [{ apiKeyAuth: [] }],
+    headers: { type: "object", required: ["x-api-key"], properties: { "x-api-key": { type: "string", description: "Também pode ser preenchido pelo Authorize global." } } },
+    params: { type: "object", required: ["identificadorPublico"], properties: { identificadorPublico: { type: "string", minLength: 1, maxLength: 40, examples: ["gcl_0123456789abcdef0123456789abcdef"] } } },
+    response: {
+      200: { ...publicTrackingResponse, examples: [{ identificadorPublico: "gcl_0123456789abcdef0123456789abcdef", externalId: "erp-lote-2026-0001", status: "RECEBIDO", dataEntrada: "2026-11-20T12:00:00.000Z", criadoEm: "2026-11-20T12:00:00.000Z", atualizadoEm: "2026-11-20T12:10:00.000Z", quantidadeEquipamentos: 1, historicoOperacional: [{ instante: "2026-11-20T12:00:00.000Z", acao: "SUBMISSAO_PUBLICA_LOTE", resultado: "SUCESSO" }], equipamentos: [{ tipo: "NOTEBOOK", marca: "Exemplo", modelo: "NB-14", estadoFisico: "BOM_ESTADO", statusRastreamento: "AGUARDANDO_TRIAGEM", movimentacoes: [] }] }] },
+      401: errorResponse("API Key ausente, inválida, expirada ou revogada.", "INVALID_API_KEY", "API Key não autenticada."),
+      403: errorResponse("A chave não possui rastreabilidade:read ou o vínculo não está ativo.", "FORBIDDEN", "Escopo ou associação insuficiente."),
+      404: errorResponse("Identificador não encontrado para o parceiro autenticado.", "LOT_NOT_FOUND", "Lote não encontrado."),
+      429: errorResponse("Limite por parceiro ou chave excedido.", "RATE_LIMIT_EXCEEDED", "Limite de requisições por minuto excedido."),
+    },
   } }, async request => controller.getByPublicId((request.params as { identificadorPublico: string }).identificadorPublico, request.integrationIdentity as IntegrationIdentity, request.id));
 
   app.get("/api/v1/public/rastreabilidade/external/:externalId", { preHandler: [authenticate, readPre], schema: {
-    tags: ["API Pública"], summary: "Consulta rastreabilidade por externalId no contexto do parceiro autenticado",
-    description: "A referência externa é isolada pelo parceiro da API Key; o escopo rastreabilidade:read e o vínculo ativo com a organização são verificados.", security: [{ apiKeyAuth: [] }],
+    tags: ["Rastreabilidade"], summary: "Consulta rastreabilidade por externalId no contexto do parceiro autenticado",
+    description: "A referência externalId é isolada pelo parceiro da API Key; o escopo rastreabilidade:read e o vínculo ativo com a organização são verificados. Responde 404 quando a referência não existe no contexto daquele parceiro.", security: [{ apiKeyAuth: [] }],
     headers: { type: "object", required: ["x-api-key"], properties: { "x-api-key": { type: "string" } } },
-    params: { type: "object", required: ["externalId"], properties: { externalId: { type: "string", minLength: 1, maxLength: 200 } } },
-    response: { 200: publicTrackingResponse, 401: err, 403: err, 404: err, 429: err },
+    params: { type: "object", required: ["externalId"], properties: { externalId: { type: "string", minLength: 1, maxLength: 200, examples: ["erp-lote-2026-0001"] } } },
+    response: {
+      200: { ...publicTrackingResponse, examples: [{ identificadorPublico: "gcl_0123456789abcdef0123456789abcdef", externalId: "erp-lote-2026-0001", status: "RECEBIDO", dataEntrada: "2026-11-20T12:00:00.000Z", criadoEm: "2026-11-20T12:00:00.000Z", atualizadoEm: "2026-11-20T12:10:00.000Z", quantidadeEquipamentos: 1, historicoOperacional: [{ instante: "2026-11-20T12:00:00.000Z", acao: "SUBMISSAO_PUBLICA_LOTE", resultado: "SUCESSO" }], equipamentos: [{ tipo: "NOTEBOOK", marca: "Exemplo", modelo: "NB-14", estadoFisico: "BOM_ESTADO", statusRastreamento: "AGUARDANDO_TRIAGEM", movimentacoes: [] }] }] },
+      401: errorResponse("API Key ausente, inválida, expirada ou revogada.", "INVALID_API_KEY", "API Key não autenticada."),
+      403: errorResponse("A chave não possui rastreabilidade:read ou o vínculo não está ativo.", "FORBIDDEN", "Escopo ou associação insuficiente."),
+      404: errorResponse("externalId não encontrado no parceiro autenticado.", "LOT_NOT_FOUND", "Lote não encontrado."),
+      429: errorResponse("Limite por parceiro ou chave excedido.", "RATE_LIMIT_EXCEEDED", "Limite de requisições por minuto excedido."),
+    },
   } }, async request => controller.getByExternalId((request.params as { externalId: string }).externalId, request.integrationIdentity as IntegrationIdentity, request.id));
 }

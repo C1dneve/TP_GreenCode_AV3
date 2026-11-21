@@ -6,7 +6,7 @@ export interface RateLimitResult {
   retryAfterSeconds: number;
 }
 
-/** Fixed-window limiter local ao processo. Não é distribuído entre instâncias. */
+/** Implementação local usada somente por testes unitários; não injetar em módulos de produção. */
 export class InMemoryRateLimiter {
   private readonly buckets = new Map<string, { windowStart: number; count: number }>();
 

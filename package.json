@@ -11,17 +11,19 @@
     "dev": "tsx watch src/server.ts",
     "build": "prisma generate && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "start": "node dist/src/server.js",
-    "test": "npm run build && node --test dist/src/tests/*.test.js",
+    "test": "npm run test:unit",
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
-    "test:integration": "npm run build && node --test --test-concurrency=1 dist/src/tests/integration/*.integration.test.js",
+    "test:integration": "npm run build && node --test --test-concurrency=1 --test-reporter=spec dist/src/tests/integration/*.integration.test.js",
     "dev:worker": "tsx watch src/worker.ts",
     "worker": "node dist/src/worker.js",
-    "start:worker": "node dist/src/worker.js"
+    "start:worker": "node dist/src/worker.js",
+    "test:unit": "npm run build && node --test --test-reporter=spec dist/src/tests/*.test.js",
+    "test:demonstracao": "npm run build && node dist/src/tests/demonstracao.js"
   },
   "dependencies": {
     "@fastify/jwt": "^10.2.5",

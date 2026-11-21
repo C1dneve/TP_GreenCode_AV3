@@ -397,9 +397,25 @@ Não aponte a suíte de integração para o banco principal. Os testes verificam
 
 ### 6.5 Resultados e evidências
 
-Na entrega recebida, foram informados cinco testes unitários focados aprovados e transpilation sintática de 22 arquivos sem diagnósticos. Build oficial, validação Prisma, migrations PostgreSQL e testes HTTP/integração completos ainda não estavam executados por incompatibilidade de Node no ambiente e falha de rede ao baixar dependências. Esses resultados não substituem as execuções deste guia.
+Nesta cópia, não há uma execução completa da suíte aprovada. Consulte a seção 6.7 e `docs/evidencias-testes-av3.md` para os comandos tentados, bloqueios observados e verificações estáticas que foram possíveis. Registre a data, o comando completo, o número de testes aprovados/falhos e qualquer erro após executar no ambiente Node.js 24. Não marque uma etapa como aprovada se o comando não chegou a executar os testes.
 
-Registre a data, o comando completo, o número de testes aprovados/falhos e qualquer erro. Não marque uma etapa como aprovada se o comando não chegou a executar os testes.
+
+
+### 6.6 Demonstração detalhada de entradas e saídas
+
+O comando abaixo executa cenários controlados com asserts e apresenta no terminal a entrada, resultado esperado, resultado obtido e status individual. O relatório Markdown é atualizado no final da execução:
+
+```shell
+npm run test:demonstracao
+```
+
+Arquivo gerado: `docs/evidencias-testes-av3.md`.
+
+A demonstração cobre as operações de domínio para eficiência, rentabilidade, regressão de vida útil e serialização CSV, além de requisições Fastify para rotas públicas, relatórios e endpoints de saúde/OpenAPI. No cenário de API Key, a rota e o `createApiKeyAuthenticator` de produção são executados; uma chave efêmera é gerada e seu formato/hash é validado pelo código real. O registro retornado pelo Prisma, o controller e o rate limiter são doubles determinísticos, portanto esse cenário não comprova persistência PostgreSQL, revogação consultada no banco nem rate limiting concorrente entre instâncias. Os cenários assíncronos também simulam o cliente Prisma; o processamento/arquivo local é executado pelo serviço, mas não publica em Redis/BullMQ nem inicializa o worker real. Consulte a seção 6.7 e o próprio relatório de evidências para distinguir cada natureza de execução.
+
+### 6.7 Estado de execução desta entrega
+
+A documentação e o código de demonstração foram preparados, mas não foi possível executar `npm run test:demonstracao` nesta sessão porque o ambiente disponibilizou Node.js 22.16.0, enquanto o projeto requer Node.js 24, e a instalação npm expirou sem disponibilizar dependências locais. Docker, PostgreSQL e Redis também não estavam disponíveis. Por isso, não há saída de teste marcada como aprovada nesta entrega; o arquivo de evidências registra esse bloqueio. Execute os comandos acima em ambiente Node 24/Docker antes de apresentar os resultados como homologados.
 
 ## 7. Como registrar a avaliação
 

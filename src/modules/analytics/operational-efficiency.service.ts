@@ -73,10 +73,21 @@ export class OperationalEfficiencyService {
     const totalDurations: number[] = [];
     const activeDurations: number[] = [];
     const waitDurations: number[] = [];
-    const byOperator = new Map<string, { nome: string; sessoes: number; lotes: Set<string>; active: number }>();
+    const byOperator = new Map<string, {
+      nome: string;
+      sessoesConsideradas: number;
+      sessoesComAtividade: number;
+      lotesAtendidos: Set<string>;
+      lotesComAtividade: Set<string>;
+      duracoesEfetivasPorSessao: number[];
+      tempoEfetivoTotalMinutos: number;
+      tempoEfetivoPorLote: Map<string, number>;
+    }>();
     const byPeriod = new Map<string, number[]>();
+    let totalTempoEfetivoMinutos = 0;
     const byOrganization = new Map<string, number[]>();
     let measuredSessionCount = 0;
+    let measuredLotsWithSessions = 0;
     let legacySessionCount = 0;
     let missingStartSessions = 0;
     let invalidChronologySessions = 0;
@@ -104,6 +115,7 @@ export class OperationalEfficiencyService {
         return valid;
       }).sort((a, b) => a.started!.getTime() - b.started!.getTime() || a.sessaoId.localeCompare(b.sessaoId));
       measuredSessionCount += validIntervals.length;
+      if (validIntervals.length) measuredLotsWithSessions += 1;
 
       if (validIntervals.length) {
         // União dos intervalos: a parte sobreposta pertence à sessão que começou primeiro.
@@ -114,17 +126,36 @@ export class OperationalEfficiencyService {
           const start = Math.max(session.started!.getTime(), cursor);
           const end = Math.max(start, session.completed.getTime());
           const uniqueMs = end - start;
+          const uniqueMinutes = uniqueMs / 60_000;
+          activeMs += uniqueMs;
+
+          // Toda sessão AV3 cronologicamente válida é uma observação, mesmo
+          // quando sua contribuição exclusiva é zero por estar totalmente coberta
+          // por uma sessão anterior. Isso torna a amostra explícita e auditável.
+          const operator = byOperator.get(session.operatorId) ?? {
+            nome: session.operatorName,
+            sessoesConsideradas: 0,
+            sessoesComAtividade: 0,
+            lotesAtendidos: new Set<string>(),
+            lotesComAtividade: new Set<string>(),
+            duracoesEfetivasPorSessao: [],
+            tempoEfetivoTotalMinutos: 0,
+            tempoEfetivoPorLote: new Map<string, number>(),
+          };
+          operator.sessoesConsideradas += 1;
+          operator.duracoesEfetivasPorSessao.push(uniqueMinutes);
+          operator.lotesAtendidos.add(lotId);
+          operator.tempoEfetivoTotalMinutos += uniqueMinutes;
+          operator.tempoEfetivoPorLote.set(lotId, (operator.tempoEfetivoPorLote.get(lotId) ?? 0) + uniqueMinutes);
           if (uniqueMs > 0) {
-            activeMs += uniqueMs;
-            const operator = byOperator.get(session.operatorId) ?? { nome: session.operatorName, sessoes: 0, lotes: new Set<string>(), active: 0 };
-            operator.active += uniqueMs / 60_000;
-            operator.lotes.add(lotId);
-            operator.sessoes += 1;
-            byOperator.set(session.operatorId, operator);
+            operator.sessoesComAtividade += 1;
+            operator.lotesComAtividade.add(lotId);
           }
+          byOperator.set(session.operatorId, operator);
           cursor = Math.max(cursor, session.completed.getTime());
         }
         const active = activeMs / 60_000;
+        totalTempoEfetivoMinutos += active;
         const wait = total - active;
         if (Number.isFinite(active) && active >= 0 && Number.isFinite(wait) && wait >= 0) {
           activeDurations.push(active);
@@ -161,14 +192,41 @@ export class OperationalEfficiencyService {
         minimo: totalDurations.length ? round(Math.min(...totalDurations)) : null,
         maximo: totalDurations.length ? round(Math.max(...totalDurations)) : null,
       },
-      porOperador: [...byOperator].map(([operadorId, value]) => ({
-        operadorId, operador: value.nome, lotesComAtividade: value.lotes.size, sessoesComAtividade: value.sessoes,
-        tempoEfetivoTriagemMinutos: round(value.active),
-      })),
+      porOperador: [...byOperator].map(([operadorId, value]) => {
+        const sessoesObservadas = value.duracoesEfetivasPorSessao.length;
+        const lotesObservados = value.tempoEfetivoPorLote.size;
+        const mediaSessao = average(value.duracoesEfetivasPorSessao);
+        const medianaSessao = median(value.duracoesEfetivasPorSessao);
+        const mediaLote = average([...value.tempoEfetivoPorLote.values()]);
+        const participacao = totalTempoEfetivoMinutos > 0
+          ? (value.tempoEfetivoTotalMinutos / totalTempoEfetivoMinutos) * 100
+          : null;
+        return {
+          operadorId,
+          operador: value.nome,
+          // Campos existentes preservados para compatibilidade com consumidores internos.
+          lotesComAtividade: value.lotesComAtividade.size,
+          sessoesComAtividade: value.sessoesComAtividade,
+          tempoEfetivoTriagemMinutos: round(value.tempoEfetivoTotalMinutos),
+          // Comparativos com denominadores explícitos; sessões sobrepostas por
+          // completo permanecem na amostra com contribuição zero.
+          tempoEfetivoTotalMinutos: round(value.tempoEfetivoTotalMinutos),
+          sessoesConsideradas: value.sessoesConsideradas,
+          observacoesTempoPorSessao: sessoesObservadas,
+          tempoEfetivoMedioPorSessaoMinutos: mediaSessao === null ? null : round(mediaSessao),
+          tempoEfetivoMedianoPorSessaoMinutos: medianaSessao === null ? null : round(medianaSessao),
+          lotesAtendidos: value.lotesAtendidos.size,
+          observacoesTempoPorLote: lotesObservados,
+          tempoMedioParticipacaoPorLoteMinutos: mediaLote === null ? null : round(mediaLote),
+          participacaoPercentualTempoEfetivo: participacao === null ? null : round(participacao),
+          // Base global do denominador: lotes com ao menos uma sessão AV3 mensurável.
+          observacoesParticipacaoPercentual: measuredLotsWithSessions,
+        };
+      }),
       porOrganizacao: [...byOrganization].map(([organizacaoId, values]) => ({ organizacaoId, lotesConcluidos: values.length, tempoTotalMedioMinutos: validMean(values) })),
       porPeriodo: [...byPeriod].sort(([a], [b]) => a.localeCompare(b)).map(([periodo, values]) => ({ periodo, lotesConcluidos: values.length, tempoTotalMedioMinutos: validMean(values) })),
       gargalo: pendingLots > 0 ? "Existem lotes aguardando início ou conclusão de triagem." : null,
-      metodologia: "Tempo total: dataEntrada do lote até o último evento TRIAGEM_CONCLUIDA válido. Tempo efetivo: união dos intervalos TRIAGEM_INICIADA→TRIAGEM_CONCLUIDA das sessões AV3 válidas do lote; intervalos sobrepostos são contados uma vez. Espera: tempo total menos tempo efetivo, calculada apenas para lotes com sessão mensurável. Sessões legadas podem contribuir para o ciclo total, mas não para tempo efetivo. Cada lote entra uma única vez nas métricas de ciclo.",
+      metodologia: "Tempo total: dataEntrada do lote até o último evento TRIAGEM_CONCLUIDA válido. Tempo efetivo: união dos intervalos TRIAGEM_INICIADA→TRIAGEM_CONCLUIDA das sessões AV3 válidas do lote; intervalos sobrepostos são atribuídos à sessão que começou primeiro e cada trecho de tempo é contado uma única vez. Comparativos por operador usam apenas sessões AV3 completas com cronologia válida; uma sessão totalmente coberta por outra permanece na amostra com zero minuto exclusivo. Média e mediana por sessão usam a duração exclusiva de cada sessão; média por lote usa a soma exclusiva do operador em cada lote; participação percentual divide o tempo exclusivo do operador pelo tempo efetivo total de todos os lotes elegíveis. Quantidades de observações acompanham cada indicador. Sessões legadas podem contribuir para o ciclo total, mas não para comparativos por operador. Cada lote entra uma única vez nas métricas de ciclo.",
     };
     await this.repo.saveRun({
       tipo: "EFICIENCIA_OPERACIONAL", organizacaoId: filters.organizacaoId ?? null,

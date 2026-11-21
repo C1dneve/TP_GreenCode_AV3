@@ -1,5 +1,5 @@
 /*
- * GreenCode API of CID — Swagger UI
+ * GreenCode — identidade visual do Swagger UI
  * Tema único e fixo: preto, cinza escuro e ouro.
  * Não depende da preferência de tema do navegador ou do sistema operacional.
  */
@@ -76,7 +76,7 @@ body {
 }
 
 .swagger-ui .topbar .link::after {
-  content: "GreenCode API of CID";
+  content: "GreenCode · API de Integração";
   color: var(--gc-gold);
   font-size: 18px;
   font-weight: 850;
@@ -546,5 +546,293 @@ body {
     transition-duration: .01ms !important;
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
+  }
+}
+
+/* Navegação lateral inspirada em portais de API, mantendo a área de operações
+   e os componentes de execução do Swagger UI original. */
+:root {
+  --gc-sidebar-width: 286px;
+  --gc-sidebar-bg: #0b0b0b;
+  --gc-sidebar-selected: #282116;
+}
+
+#gc-doc-sidebar {
+  position: fixed;
+  z-index: 1000;
+  inset: 66px auto 0 0;
+  display: flex;
+  width: var(--gc-sidebar-width);
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--gc-text);
+  background: var(--gc-sidebar-bg);
+  border-right: 1px solid var(--gc-border);
+  box-shadow: 8px 0 28px rgb(0 0 0 / 20%);
+  transition: transform .18s ease;
+}
+
+.gc-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--gc-border);
+}
+
+.gc-brand-mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  place-items: center;
+  color: var(--gc-black);
+  background: var(--gc-gold);
+  border-radius: 9px;
+  font-size: 22px;
+  font-weight: 950;
+}
+
+.gc-sidebar-brand strong,
+.gc-sidebar-brand small {
+  display: block;
+}
+
+.gc-sidebar-brand strong {
+  color: var(--gc-text);
+  font-size: 15px;
+  font-weight: 850;
+  letter-spacing: .01em;
+}
+
+.gc-sidebar-brand small {
+  margin-top: 3px;
+  color: var(--gc-muted);
+  font-size: 11px;
+}
+
+.gc-sidebar-caption {
+  margin: 19px 18px 8px;
+  color: #888;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .13em;
+}
+
+.gc-sidebar-nav {
+  flex: 1;
+  overflow: auto;
+  padding: 0 12px 18px;
+  scrollbar-color: #4a4a4a transparent;
+  scrollbar-width: thin;
+}
+
+.gc-sidebar-group {
+  margin: 8px 0 16px;
+}
+
+.gc-sidebar-group h2 {
+  margin: 0 7px 6px;
+  padding: 7px 0 5px;
+  color: #a6a6a6;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.gc-sidebar-group ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gc-sidebar-tag,
+.gc-sidebar-operation {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  text-align: left;
+  color: #dedede;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  transition: background-color .12s ease, color .12s ease;
+}
+
+.gc-sidebar-tag {
+  min-height: 34px;
+  padding: 7px 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.gc-sidebar-tag:hover,
+.gc-sidebar-operation:hover {
+  color: var(--gc-gold);
+  background: rgb(242 175 41 / 8%);
+}
+
+.gc-sidebar-tag:focus-visible,
+.gc-sidebar-operation:focus-visible,
+.gc-sidebar-toggle:focus-visible {
+  outline: 2px solid var(--gc-gold);
+  outline-offset: 2px;
+}
+
+.gc-sidebar-operations {
+  margin: 2px 0 6px 11px !important;
+  padding: 2px 0 2px 9px !important;
+  border-left: 1px solid #343434;
+}
+
+.gc-sidebar-operations li + li {
+  margin-top: 2px;
+}
+
+.gc-sidebar-operation {
+  gap: 7px;
+  min-height: 27px;
+  padding: 4px 6px;
+  color: #a9a9a9;
+  font-size: 10px;
+}
+
+.gc-method {
+  display: inline-flex;
+  min-width: 39px;
+  justify-content: center;
+  padding: 3px 4px;
+  color: #111;
+  background: #b8b8b8;
+  border-radius: 3px;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .02em;
+}
+
+.gc-method-get { background: #76c69a; }
+.gc-method-post { background: var(--gc-gold); }
+.gc-method-put,
+.gc-method-patch { background: #82b9e8; }
+.gc-method-delete { background: #e58b8b; }
+
+.gc-operation-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gc-sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 18px;
+  color: #999;
+  border-top: 1px solid var(--gc-border);
+  font-size: 10px;
+}
+
+.gc-status-dot {
+  width: 7px;
+  height: 7px;
+  background: #55b788;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgb(85 183 136 / 12%);
+}
+
+.gc-sidebar-toggle {
+  display: inline-grid;
+  width: 33px;
+  height: 33px;
+  flex: 0 0 33px;
+  place-items: center;
+  margin-right: 13px;
+  color: var(--gc-gold);
+  background: var(--gc-surface);
+  border: 1px solid var(--gc-border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+#swagger-ui {
+  width: calc(100% - var(--gc-sidebar-width));
+  margin-left: var(--gc-sidebar-width);
+  transition: margin-left .18s ease, width .18s ease;
+}
+
+body.gc-sidebar-collapsed #gc-doc-sidebar {
+  transform: translateX(-100%);
+}
+
+body.gc-sidebar-collapsed #swagger-ui {
+  width: 100%;
+  margin-left: 0;
+}
+
+body.gc-sidebar-collapsed .gc-sidebar-toggle {
+  color: var(--gc-text);
+}
+
+.gc-sidebar-overlay {
+  display: none;
+}
+
+.swagger-ui .opblock-tag-section {
+  scroll-margin-top: 82px;
+}
+
+.swagger-ui .opblock {
+  scroll-margin-top: 82px;
+}
+
+@media (max-width: 900px) {
+  #gc-doc-sidebar {
+    inset: 58px auto 0 0;
+    width: min(88vw, 320px);
+    transform: translateX(-105%);
+  }
+
+  body.gc-sidebar-mobile-open #gc-doc-sidebar {
+    transform: translateX(0);
+  }
+
+  #swagger-ui {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .gc-sidebar-toggle {
+    margin-right: 9px;
+  }
+
+  .gc-sidebar-overlay {
+    position: fixed;
+    z-index: 999;
+    inset: 58px 0 0;
+    display: block;
+    visibility: hidden;
+    opacity: 0;
+    background: rgb(0 0 0 / 65%);
+    border: 0;
+    transition: opacity .16s ease, visibility .16s ease;
+  }
+
+  body.gc-sidebar-mobile-open .gc-sidebar-overlay {
+    visibility: visible;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #gc-doc-sidebar,
+  #swagger-ui,
+  .gc-sidebar-overlay {
+    transition: none;
   }
 }

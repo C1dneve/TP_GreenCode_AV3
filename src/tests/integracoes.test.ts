@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateApiKey, hashApiSecret, parseApiKey, verifyApiSecret } from "../modules/integracoes/api-key-security.js";
 import { INTEGRATION_SCOPES, effectiveScopes, hasScope, normalizeScopes } from "../modules/integracoes/scopes.js";
-import { InMemoryRateLimiter } from "../modules/integracoes/rate-limiter.js";
+import { InMemoryRateLimiter, PrismaRateLimiter } from "../modules/integracoes/rate-limiter.js";
 import { semanticHash, stableJson } from "../modules/integracoes/normalization.js";
 import { normalizeLoteCreateInput } from "../modules/lotes/lote-domain.js";
 import { normalizeEquipmentCreateInput } from "../modules/equipamentos/equipamento-domain.js";
@@ -45,6 +45,44 @@ test("rate limiting aplica janela de 60 segundos e informa espera HTTP 429", () 
   assert.equal(blocked.allowed, false);
   assert.equal(blocked.retryAfterSeconds, 60);
   assert.equal(limiter.consume("partner:a", 2, start + 60_001).allowed, true);
+});
+
+test("rate limiter PostgreSQL usa contador atômico por chave e janela fixa compartilhável", async () => {
+  const counts = new Map<string, number>();
+  const statements: Array<{ sql: string; values: unknown[] }> = [];
+  let cleanupCalls = 0;
+  const fakePrisma = {
+    rateLimitBucket: { deleteMany: async () => { cleanupCalls += 1; return { count: 0 }; } },
+    $queryRaw: async (parts: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = parts.join("?");
+      statements.push({ sql, values });
+      const bucket = `${String(values[0])}|${new Date(values[1] as Date).toISOString()}`;
+      const quantity = (counts.get(bucket) ?? 0) + 1;
+      counts.set(bucket, quantity);
+      return [{ quantidade: quantity }];
+    },
+  } as never;
+  const limiter = new PrismaRateLimiter(fakePrisma);
+  const start = 1_800_000_000_000;
+
+  const first = await limiter.consume("partner:partner-a", 2, start);
+  const otherKey = await limiter.consume("key:key-a", 2, start);
+  const second = await limiter.consume("partner:partner-a", 2, start + 1_000);
+  const blocked = await limiter.consume("partner:partner-a", 2, start + 2_000);
+  const nextWindow = await limiter.consume("partner:partner-a", 2, start + 60_000);
+
+  assert.equal(first.allowed, true);
+  assert.equal(otherKey.allowed, true, "um contador de chave não consome o bucket do parceiro");
+  assert.equal(second.allowed, true);
+  assert.equal(second.remaining, 0);
+  assert.equal(blocked.allowed, false);
+  assert.equal(blocked.retryAfterSeconds, 58);
+  assert.equal(nextWindow.allowed, true, "a janela seguinte inicia um contador novo");
+  assert.equal(blocked.resetAt, start + 60_000);
+  assert.equal(cleanupCalls, 0, "a limpeza periódica não deve executar em toda requisição");
+  assert.equal(statements.length, 5);
+  assert.ok(statements.every(item => item.sql.includes("INSERT INTO rate_limit_buckets") && item.sql.includes("ON CONFLICT") && item.sql.includes("RETURNING")));
+  assert.deepEqual(statements.map(item => item.values[0]), ["partner:partner-a", "key:key-a", "partner:partner-a", "partner:partner-a", "partner:partner-a"]);
 });
 
 test("hash semântico ignora ordem das propriedades, mas preserva a ordem das listas", () => {

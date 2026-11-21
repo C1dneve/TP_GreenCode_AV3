@@ -82,6 +82,92 @@ test("eficiência escolhe a última sessão concluída por lote e descarta crono
 });
 
 
+test("comparativo por operador distribui sobreposições, explicita amostras e exclui sessões legadas", async () => {
+  const events: any[] = [];
+  const addSession = (
+    sessaoId: string,
+    loteId: string,
+    responsavelId: string,
+    nome: string,
+    inicio: string,
+    fim: string,
+    origemSessao = "AV3",
+    mensuravel = true,
+  ) => {
+    const lote = { id: loteId, organizacaoId: "org-1" };
+    const responsavel = { id: responsavelId, nome };
+    events.push(
+      { sessaoId, loteId, responsavelId, responsavel, lote, origemSessao, mensuravel, etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date(inicio) },
+      { sessaoId, loteId, responsavelId, responsavel, lote, origemSessao, mensuravel, etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date(fim) },
+    );
+  };
+
+  // Lote 1: A trabalha 90 min. B1 fica totalmente coberta (0 min exclusivos);
+  // B2 recebe somente os 30 min restantes depois de 10:30.
+  addSession("a-l1", "lote-1", "op-a", "Operador A", "2026-11-20T09:00:00Z", "2026-11-20T10:30:00Z");
+  addSession("b-zero-l1", "lote-1", "op-b", "Operador B", "2026-11-20T09:30:00Z", "2026-11-20T10:00:00Z");
+  addSession("b-l1", "lote-1", "op-b", "Operador B", "2026-11-20T10:00:00Z", "2026-11-20T11:00:00Z");
+  // Lote 2: A recebe 30 min; B inicia com 10 min sobrepostos e recebe os 60 min restantes.
+  addSession("a-l2", "lote-2", "op-a", "Operador A", "2026-11-20T13:00:00Z", "2026-11-20T13:30:00Z");
+  addSession("b-l2", "lote-2", "op-b", "Operador B", "2026-11-20T13:20:00Z", "2026-11-20T14:30:00Z");
+  addSession("legacy-l2", "lote-2", "op-a", "Operador A", "2026-11-20T12:00:00Z", "2026-11-20T12:15:00Z", "LEGADO_AV2", false);
+
+  let persisted: any;
+  const repository = {
+    triageEvents: async () => events,
+    lots: async () => [
+      { id: "lote-1", organizacaoId: "org-1", dataEntrada: new Date("2026-11-20T09:00:00Z"), statusProcessamento: "TRIAGEM_CONCLUIDA" },
+      { id: "lote-2", organizacaoId: "org-1", dataEntrada: new Date("2026-11-20T13:00:00Z"), statusProcessamento: "TRIAGEM_CONCLUIDA" },
+    ],
+    saveRun: async (run: any) => { persisted = run; },
+  } as unknown as AnalyticsRepository;
+
+  const result = await new OperationalEfficiencyService(repository).execute();
+  const operatorA = result.porOperador.find(item => item.operadorId === "op-a")!;
+  const operatorB = result.porOperador.find(item => item.operadorId === "op-b")!;
+
+  assert.equal(result.lotesComTriagemConcluida, 2, "cada lote entra uma vez no ciclo, embora tenha várias sessões");
+  assert.equal(result.sessoesMensuraveis, 5, "as cinco sessões AV3 completas são mensuráveis; legado fica fora");
+  assert.equal(result.sessoesLegadasSincronas, 1);
+  assert.equal(result.tempoEfetivoTriagemMedioMinutos, 105, "média dos tempos efetivos de 120 e 90 minutos por lote");
+  assert.equal(result.porOperador.length, 2, "a sessão legada não cria observação de operador");
+
+  assert.equal(operatorA.tempoEfetivoTotalMinutos, 120);
+  assert.equal(operatorA.sessoesConsideradas, 2);
+  assert.equal(operatorA.sessoesComAtividade, 2);
+  assert.equal(operatorA.tempoEfetivoMedioPorSessaoMinutos, 60);
+  assert.equal(operatorA.tempoEfetivoMedianoPorSessaoMinutos, 60);
+  assert.equal(operatorA.lotesAtendidos, 2);
+  assert.equal(operatorA.tempoMedioParticipacaoPorLoteMinutos, 60);
+  assert.equal(operatorA.participacaoPercentualTempoEfetivo, 57.14);
+  assert.equal(operatorA.observacoesParticipacaoPercentual, 2, "a participação usa dois lotes no denominador global");
+
+  assert.equal(operatorB.tempoEfetivoTotalMinutos, 90);
+  assert.equal(operatorB.sessoesConsideradas, 3, "a sessão inteiramente sobreposta permanece na amostra");
+  assert.equal(operatorB.sessoesComAtividade, 2);
+  assert.equal(operatorB.tempoEfetivoMedioPorSessaoMinutos, 30);
+  assert.equal(operatorB.tempoEfetivoMedianoPorSessaoMinutos, 30);
+  assert.equal(operatorB.lotesAtendidos, 2);
+  assert.equal(operatorB.tempoMedioParticipacaoPorLoteMinutos, 45);
+  assert.equal(operatorB.participacaoPercentualTempoEfetivo, 42.86);
+  assert.equal(operatorB.observacoesParticipacaoPercentual, 2, "a base global do percentual é comum aos operadores");
+  assert.equal(operatorA.tempoEfetivoTotalMinutos + operatorB.tempoEfetivoTotalMinutos, 210, "o total não duplica os 70 min de interseção dos intervalos");
+  assert.equal((persisted.resultado as any).porOperador[1].sessoesConsideradas, 3);
+});
+
+test("ausência de observações mantém médias, medianas e participações indisponíveis", async () => {
+  const repository = {
+    triageEvents: async () => [],
+    lots: async () => [],
+    saveRun: async () => undefined,
+  } as unknown as AnalyticsRepository;
+  const result = await new OperationalEfficiencyService(repository).execute();
+  assert.equal(result.tempoEfetivoTriagemMedioMinutos, null);
+  assert.equal(result.tempoEfetivoTriagemMedianoMinutos, null);
+  assert.deepEqual(result.porOperador, []);
+  assert.equal(result.sessoesMensuraveis, 0);
+});
+
 test("ciclo total continua mensurável quando o evento de início histórico está ausente", async () => {
   const repository = {
     triageEvents: async () => [
@@ -213,6 +299,7 @@ test("exportação CSV protege fórmulas e escapa delimitadores; JSON converte b
   assert.match(output, /"Ana, Silva"/);
   assert.match(output, /"'=1\+1"/);
   assert.match(output, /"diz ""olá"""/);
+  assert.equal(toCsv([{ criadoEm: new Date("2026-11-20T10:00:00.000Z") }]), '"criadoEm"\r\n"2026-11-20T10:00:00.000Z"\r\n');
   assert.equal(serializeReport({ bytes: 10n }, "JSON"), '{\n  "bytes": "10"\n}');
 });
 
