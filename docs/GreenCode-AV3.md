@@ -8,9 +8,7 @@ O GreenCode apoia a logística reversa de equipamentos eletrônicos. O sistema r
 
 A AV2 consolidou o backend como uma API REST com autenticação de usuários, permissões por papel, persistência em PostgreSQL e auditoria. A AV3 amplia esse produto em duas direções: integrações externas com organizações parceiras e uma camada analítica/preditiva para apoiar decisões operacionais.
 
-A AV3 mantém o domínio operacional existente. As rotas internas continuam utilizando JWT e RBAC; os parceiros externos utilizam API Keys, escopos próprios e vínculos explícitos com as organizações que podem acessar. A API pública é versionada e não expõe diretamente as rotas administrativas ou internas.
-
-O primeiro incremento concentra-se na fundação das integrações: cadastro e administração de parceiros, associação de organizações, emissão e revogação de API Keys, submissão pública de lotes e consulta de rastreabilidade. A camada analítica e o processamento assíncrono permanecem planejados para etapas posteriores.
+A AV3 mantém o domínio operacional existente. As rotas internas continuam utilizando JWT e RBAC; os parceiros externos utilizam API Keys, escopos próprios e vínculos explícitos com as organizações que podem acessar. A API pública é versionada e separada das rotas administrativas. A versão atual também inclui análises persistidas, histórico técnico de equipamentos, relatórios assíncronos e workers BullMQ/Redis.
 
 ## O que o sistema faz nesta etapa
 
@@ -23,6 +21,9 @@ O primeiro incremento concentra-se na fundação das integrações: cadastro e a
 - Evita duplicidade por `Idempotency-Key` e por `externalId` dentro do contexto do parceiro.
 - Disponibiliza rastreabilidade pública por identificador GreenCode ou referência externa do parceiro.
 - Registra operações internas e externas na estrutura de auditoria existente.
+- Calcula eficiência operacional, estimativa de recuperação e projeção de vida útil remanescente.
+- Persiste execuções analíticas e permite backtesting das previsões maduras contra transições auditadas para INSERVIVEL.
+- Agenda análises e gera relatórios CSV/JSON em processos worker separados, com Outbox, retry, lease/heartbeat, checksum e expiração.
 
 ## Arquitetura em poucas palavras
 
@@ -71,6 +72,10 @@ Dentro de `src/`, cada módulo concentra uma parte do sistema:
 | `parceiros` | Gestão administrativa de parceiros, vínculos e API Keys |
 | `integracoes` | Geração/verificação de chaves, escopos, hash canônico e rate limiting |
 | `api-publica` | Autenticação externa, submissão de lotes e rastreabilidade |
+| `analytics` | Eficiência operacional, rentabilidade, vida útil, histórico e backtesting |
+| `triagem` | Sessões, ocorrências e conclusão com timestamps |
+| `historico-equipamentos` | Falhas, manutenções, depreciação e recuperação |
+| `relatorios-async` | Solicitação, status, processamento e download de relatórios |
 | `auditoria` | Consulta e registro dos eventos relevantes |
 | `relatorios` | Relatórios operacionais e financeiros existentes na base |
 | `parametros` | Parâmetros globais utilizados pelo domínio |
@@ -92,19 +97,17 @@ Os eventos de auditoria continuam na estrutura `EventoAuditoria`. A AV3 acrescen
 - Parceiros só acessam organizações com vínculo ativo e organização ativa.
 - Escopos efetivos são calculados por `escoposParceiro ∩ escoposApiKey` em cada requisição.
 - O segredo completo da API Key é mostrado somente na criação; o banco armazena o hash SHA-256.
-- A API pública usa `X-API-Key`; submissões também exigem `X-Integration-ID` e `Idempotency-Key`.
+- A API pública usa `X-API-Key`; submissões também exigem `X-Integration-ID` e `Idempotency-Key`. Analytics e solicitação de relatórios resolvem a organização pelo mesmo identificador público `X-Integration-ID`, sem exigir UUID interno.
 - Submissões de lote e equipamentos são atômicas: tudo é salvo ou nada é salvo.
 - A mesma chave de idempotência e o mesmo conteúdo retornam o resultado original; conteúdo divergente gera `409`.
 - A mesma referência externa e o mesmo conteúdo reutilizam o lote original no contexto do parceiro.
 - A rastreabilidade pública não expõe CNPJ, dados pessoais, IDs internos, códigos de barras internos, credenciais ou dados de outros parceiros.
-- O rate limiting usa contadores em memória do processo nesta etapa; não é distribuído entre instâncias.
+- O rate limiting público usa contadores atômicos persistidos no PostgreSQL e compartilhados entre instâncias.
 - Migrations são versionadas e as migrations anteriores não devem ser reescritas.
 
-## O que ainda não está implementado
+## Estado de implementação e validação
 
-A AV3 completa também prevê indicadores de eficiência operacional, estimativa de recuperação, previsão de vida útil remanescente e processamento assíncrono de relatórios. Essas funcionalidades exigem instrumentação e modelos de dados específicos e serão desenvolvidas nos próximos grandes passos.
-
-Neste incremento não há Redis, BullMQ, workers, scheduler, webhooks, solicitação de relatórios pela API pública nem download de artefatos. O registro técnico e o [plano de implementação](plano-de-implementacao-av3.md) distinguem essas entregas futuras do que já está no código.
+A implementação inclui os três pilares previstos no PDF: camada analítica, API pública documentada e processamento assíncrono. A existência de código não equivale a homologação: consulte o [relatório técnico](relatorio-tecnico-av3.md) e o [guia de testes](guia-de-testes-professor.md) para distinguir funcionalidades implementadas, testes executados e verificações bloqueadas por ambiente.
 
 ## Execução e testes
 

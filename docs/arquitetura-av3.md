@@ -2,7 +2,7 @@
 
 ## 1. Base arquitetural
 
-A AV3 mantém o monólito modular TypeScript/ESM. A aplicação é executada em Node.js 24, utiliza Fastify 5 para HTTP, Prisma 7 para persistência e PostgreSQL 17 como banco principal. Não há separação em microserviços neste incremento.
+A AV3 mantém o monólito modular TypeScript/ESM. A aplicação é executada em Node.js 24, utiliza Fastify 5 para HTTP, Prisma 7 para persistência e PostgreSQL 17 como banco principal. Redis 7/BullMQ 5 suportam workers e agendamentos; a aplicação continua sendo um monólito modular, não uma arquitetura de microserviços.
 
 Nos módulos operacionais, o fluxo principal permanece:
 
@@ -14,13 +14,18 @@ Rotas validam o contrato HTTP; controllers conectam requisições aos casos de u
 
 Os módulos novos de parceiros e API pública seguem `Routes → Controllers → Services`, mas parte dos services acessa Prisma diretamente. Essa diferença em relação ao padrão dos módulos operacionais está documentada como dívida técnica a revisar antes de ampliar esses casos de uso. A transação multi-entidade de submissão deve continuar atômica mesmo se sua persistência for extraída para um repositório dedicado.
 
-## 2. Módulos do primeiro incremento
+## 2. Módulos operacionais, analíticos e de integração
 
 | Módulo | Responsabilidade |
 |---|---|
 | `parceiros` | Administração de parceiros, associações com organizações, escopos, limites e ciclo de vida das API Keys |
 | `integracoes` | Geração/verificação de API Keys, normalização de escopos, hash canônico e rate limiting |
 | `api-publica` | Autenticação externa, autorização, submissão de lotes e consulta de rastreabilidade |
+| `analytics` | Eficiência operacional, rentabilidade, OLS, histórico e backtesting |
+| `triagem` | Sessões de triagem, ocorrências e conclusão com timestamps |
+| `historico-equipamentos` | Falhas, manutenções, depreciação e recuperação |
+| `relatorios-async` | Ciclo de vida, projeção pública, exportação, checksum e download |
+| `infrastructure/queue` | Filas BullMQ, Outbox, schedulers e conexão Redis |
 | `auditoria` | Uso do `EventoAuditoria` existente, ampliado para atores externos |
 | `lotes` | Regras de lote existentes e funções de validação compartilhadas com a submissão pública |
 | `equipamentos` | Regras de equipamento existentes e funções de normalização compartilhadas |
@@ -39,7 +44,7 @@ A cada requisição, a aplicação verifica segredo, revogação, validade, esta
 escoposEfetivos = escoposParceiro ∩ escoposApiKey
 ```
 
-A redução de permissões do parceiro produz efeito imediatamente para todas as chaves. O identificador público de associação `gci_...` é enviado em `X-Integration-ID`; o identificador público do lote usa prefixo `gcl_...`. O cliente não envia ID interno da organização nem CNPJ como referência de integração.
+A redução de permissões do parceiro produz efeito imediatamente para todas as chaves. O identificador público de associação `gci_...` é enviado em `X-Integration-ID` nas submissões, análises e solicitações públicas de relatórios; o identificador público do lote usa prefixo `gcl_...`. O cliente não envia ID interno da organização nem CNPJ como referência de integração.
 
 ## 4. Rate limiting e limites de submissão
 
@@ -59,7 +64,7 @@ Parceiros, associações e chaves possuem ciclo de vida lógico. A revogação n
 
 ## 7. Segurança e minimização de dados
 
-A rastreabilidade retorna apenas campos operacionais necessários: identificador público, status e datas do lote, quantidade de equipamentos, histórico operacional permitido e campos de equipamento/movimentação aprovados. A resposta não deve expor CNPJ, dados pessoais, nomes de responsáveis internos, IDs internos, `codigoBarrasInterno`, credenciais, tokens, hashes ou referências externas de terceiros.
+A rastreabilidade retorna apenas campos operacionais necessários: identificador público, status e datas do lote, quantidade de equipamentos, histórico operacional permitido e campos de equipamento/movimentação aprovados. Resultados analíticos e relatórios públicos usam projeções específicas. As respostas públicas não incluem CNPJ, dados pessoais, nomes de responsáveis internos, IDs técnicos de equipamento/lote, `codigoBarrasInterno`, credenciais, tokens, hashes ou referências externas de terceiros.
 
 A consulta por `externalId` é contextualizada ao parceiro autenticado. A consulta por `publicId` exige associação ativa com a organização do lote. Logs Fastify redigem `X-API-Key`, Authorization, cookies e campos sensíveis configurados; auditoria não registra segredo nem hash.
 

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateApiKey, hashApiSecret, parseApiKey, verifyApiSecret } from "../modules/integracoes/api-key-security.js";
-import { effectiveScopes, hasScope, normalizeScopes } from "../modules/integracoes/scopes.js";
+import { INTEGRATION_SCOPES, effectiveScopes, hasScope, normalizeScopes } from "../modules/integracoes/scopes.js";
 import { InMemoryRateLimiter } from "../modules/integracoes/rate-limiter.js";
 import { semanticHash, stableJson } from "../modules/integracoes/normalization.js";
 import { normalizeLoteCreateInput } from "../modules/lotes/lote-domain.js";
@@ -30,6 +30,8 @@ test("escopos efetivos são a interseção entre parceiro e API Key", () => {
   assert.equal(hasScope(effective, "lotes:write"), false);
   assert.equal(hasScope(effective, "rastreabilidade:read"), true);
   assert.deepEqual(effectiveScopes(["lotes:write"], ["rastreabilidade:read"]), []);
+  assert.deepEqual(normalizeScopes(INTEGRATION_SCOPES), [...INTEGRATION_SCOPES].sort());
+  for (const scope of INTEGRATION_SCOPES) assert.deepEqual(normalizeScopes([scope]), [scope]);
   assert.deepEqual(normalizeScopes(["analytics:read", "reports:write"]), ["analytics:read", "reports:write"]);
   assert.throws(() => normalizeScopes(["scope-inexistente"]), (error: unknown) => error instanceof Error);
 });

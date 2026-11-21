@@ -4,9 +4,12 @@ import { average, linearRegression, median, percentile } from "../modules/analyt
 import { OperationalEfficiencyService } from "../modules/analytics/operational-efficiency.service.js";
 import { ProfitabilityService } from "../modules/analytics/profitability.service.js";
 import { UsefulLifeService } from "../modules/analytics/useful-life.service.js";
+import { UsefulLifeBacktestingService } from "../modules/analytics/backtesting.service.js";
 import type { AnalyticsRepository } from "../modules/analytics/analytics.repository.js";
 import { calculateDepreciatedValue } from "../modules/historico-equipamentos/historico.service.js";
-import { serializeReport, toCsv } from "../modules/relatorios-async/report-format.js";
+import { sanitizePublicReportPayload, serializeReport, toCsv } from "../modules/relatorios-async/report-format.js";
+import { AnalyticsController } from "../modules/analytics/analytics.controller.js";
+import { publicAnalyticsProjection } from "../modules/analytics/public-analytics.dto.js";
 
 test("estatística descritiva lida com vazio e calcula média, mediana e percentil", () => {
   assert.equal(average([]), null);
@@ -25,46 +28,100 @@ test("regressão linear OLS retorna inclinação, intercepto e R² e rejeita amo
   assert.equal(linearRegression([[1, 2], [1, 3]]), null);
 });
 
-test("eficiência operacional usa timestamps persistidos e exclui sessões incompletas da média", async () => {
+test("eficiência operacional mede entrada→conclusão, triagem efetiva e espera sem contar lote duas vezes", async () => {
   let persisted: Record<string, unknown> | undefined;
   const repository = {
     triageEvents: async () => [
-      { sessaoId: "s1", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T10:00:00Z"), responsavelId: "u1", responsavel: { nome: "Operador A" }, lote: { organizacaoId: "o1" } },
-      { sessaoId: "s1", etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date("2026-11-20T11:30:00Z"), responsavelId: "u1", responsavel: { nome: "Operador A" }, lote: { organizacaoId: "o1" } },
-      { sessaoId: "s2", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T12:00:00Z"), responsavelId: "u2", responsavel: { nome: "Operador B" }, lote: { organizacaoId: "o1" } },
+      { sessaoId: "s1", loteId: "l1", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T10:00:00Z"), responsavelId: "u1", responsavel: { nome: "Operador A" }, lote: { id: "l1", organizacaoId: "o1" } },
+      { sessaoId: "s1", loteId: "l1", etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date("2026-11-20T11:30:00Z"), responsavelId: "u1", responsavel: { nome: "Operador A" }, lote: { id: "l1", organizacaoId: "o1" } },
+      { sessaoId: "s2", loteId: "l2", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T12:00:00Z"), responsavelId: "u2", responsavel: { nome: "Operador B" }, lote: { id: "l2", organizacaoId: "o1" } },
     ],
-    lots: async () => [{ statusProcessamento: "RECEBIDO" }, { statusProcessamento: "EM_TRIAGEM" }, { statusProcessamento: "FINALIZADO" }],
+    lots: async () => [
+      { id: "l1", dataEntrada: new Date("2026-11-20T09:30:00Z"), statusProcessamento: "TRIAGEM_CONCLUIDA", organizacaoId: "o1" },
+      { id: "l2", dataEntrada: new Date("2026-11-20T11:45:00Z"), statusProcessamento: "EM_TRIAGEM", organizacaoId: "o1" },
+      { id: "l3", dataEntrada: new Date("2026-11-20T08:00:00Z"), statusProcessamento: "RECEBIDO", organizacaoId: "o1" },
+    ],
     saveRun: async (data: Record<string, unknown>) => { persisted = data; },
   } as unknown as AnalyticsRepository;
   const result = await new OperationalEfficiencyService(repository).execute();
-  assert.equal(result.tempoMedioMinutos, 90);
-  assert.equal(result.tempoMedianoMinutos, 90);
-  assert.equal(result.triagensConcluidas, 1);
+  assert.equal(result.tempoTotalProcessoMedioMinutos, 120);
+  assert.equal(result.tempoEfetivoTriagemMedioMinutos, 90);
+  assert.equal(result.tempoEsperaMedioMinutos, 30);
+  assert.equal(result.lotesComTriagemConcluida, 1);
   assert.equal(result.sessoesSemConclusao, 1);
   assert.equal(result.sessoesMensuraveis, 1);
-  assert.equal(result.sessoesLegadasSincronas, 0);
   assert.equal(result.lotesPendentes, 2);
-  assert.equal((persisted?.resultado as any).tempoMedioMinutos, 90);
+  assert.equal((persisted?.resultado as any).tempoTotalProcessoMedioMinutos, 120);
 });
 
-test("sessões legadas síncronas permanecem identificadas, mas não contaminam a duração média", async () => {
+
+test("eficiência escolhe a última sessão concluída por lote e descarta cronologia inválida", async () => {
+  const repository = {
+    triageEvents: async () => [
+      { sessaoId: "s1", loteId: "l1", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T09:00:00Z"), responsavelId: "u1", responsavel: { nome: "Operador A" }, lote: { id: "l1", organizacaoId: "o1" } },
+      { sessaoId: "s1", loteId: "l1", etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date("2026-11-20T10:00:00Z"), responsavelId: "u1", responsavel: { nome: "Operador A" }, lote: { id: "l1", organizacaoId: "o1" } },
+      { sessaoId: "s2", loteId: "l1", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T09:30:00Z"), responsavelId: "u2", responsavel: { nome: "Operador B" }, lote: { id: "l1", organizacaoId: "o1" } },
+      { sessaoId: "s2", loteId: "l1", etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date("2026-11-20T12:00:00Z"), responsavelId: "u2", responsavel: { nome: "Operador B" }, lote: { id: "l1", organizacaoId: "o1" } },
+      { sessaoId: "invalid", loteId: "l2", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T07:00:00Z"), responsavelId: "u3", responsavel: { nome: "Operador C" }, lote: { id: "l2", organizacaoId: "o1" } },
+      { sessaoId: "invalid", loteId: "l2", etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date("2026-11-20T08:00:00Z"), responsavelId: "u3", responsavel: { nome: "Operador C" }, lote: { id: "l2", organizacaoId: "o1" } },
+    ],
+    lots: async () => [
+      { id: "l1", dataEntrada: new Date("2026-11-20T08:00:00Z"), statusProcessamento: "TRIAGEM_CONCLUIDA", organizacaoId: "o1" },
+      { id: "l2", dataEntrada: new Date("2026-11-20T09:00:00Z"), statusProcessamento: "TRIAGEM_CONCLUIDA", organizacaoId: "o1" },
+    ],
+    saveRun: async () => undefined,
+  } as unknown as AnalyticsRepository;
+  const result = await new OperationalEfficiencyService(repository).execute();
+  assert.equal(result.sessoesConcluidasHistoricas, 3);
+  assert.equal(result.lotesComTriagemConcluida, 1);
+  assert.equal(result.tempoTotalProcessoMedioMinutos, 240);
+  assert.equal(result.tempoEfetivoTriagemMedioMinutos, 180);
+  assert.equal(result.tempoEsperaMedioMinutos, 60);
+  assert.equal(result.porOperador.length, 2);
+  assert.deepEqual(result.porOperador.map(item => item.operador).sort(), ["Operador A", "Operador B"]);
+});
+
+
+test("ciclo total continua mensurável quando o evento de início histórico está ausente", async () => {
+  const repository = {
+    triageEvents: async () => [
+      { sessaoId: "sem-start", loteId: "l1", etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date("2026-11-20T10:00:00Z"), responsavelId: "u1", responsavel: { nome: "Operador" }, lote: { id: "l1", organizacaoId: "o1" } },
+    ],
+    lots: async () => [
+      { id: "l1", dataEntrada: new Date("2026-11-20T09:00:00Z"), statusProcessamento: "TRIAGEM_CONCLUIDA", organizacaoId: "o1" },
+    ],
+    saveRun: async () => undefined,
+  } as unknown as AnalyticsRepository;
+  const result = await new OperationalEfficiencyService(repository).execute();
+  assert.equal(result.lotesComTriagemConcluida, 1);
+  assert.equal(result.tempoTotalProcessoMedioMinutos, 60);
+  assert.equal(result.tempoEfetivoTriagemMedioMinutos, null);
+  assert.equal(result.tempoEsperaMedioMinutos, null);
+  assert.equal(result.sessoesSemInicio, 1);
+});
+
+test("sessões legadas síncronas permanecem identificadas e não entram nas métricas mensuráveis", async () => {
   let persisted: Record<string, unknown> | undefined;
   const repository = {
     triageEvents: async () => [
-      { sessaoId: "legacy", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T10:00:00Z"), responsavelId: "u1", origemSessao: "LEGADO_AV2", mensuravel: false, lote: { organizacaoId: "o1" } },
-      { sessaoId: "legacy", etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date("2026-11-20T10:00:00.010Z"), responsavelId: "u1", origemSessao: "LEGADO_AV2", mensuravel: false, lote: { organizacaoId: "o1" } },
-      { sessaoId: "av3", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T11:00:00Z"), responsavelId: "u2", origemSessao: "AV3", mensuravel: true, lote: { organizacaoId: "o1" } },
-      { sessaoId: "av3", etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date("2026-11-20T12:00:00Z"), responsavelId: "u2", origemSessao: "AV3", mensuravel: true, lote: { organizacaoId: "o1" } },
+      { sessaoId: "legacy", loteId: "l1", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T10:00:00Z"), responsavelId: "u1", origemSessao: "LEGADO_AV2", mensuravel: false, lote: { id: "l1", organizacaoId: "o1" } },
+      { sessaoId: "legacy", loteId: "l1", etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date("2026-11-20T10:00:00.010Z"), responsavelId: "u1", origemSessao: "LEGADO_AV2", mensuravel: false, lote: { id: "l1", organizacaoId: "o1" } },
+      { sessaoId: "av3", loteId: "l2", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T11:00:00Z"), responsavelId: "u2", origemSessao: "AV3", mensuravel: true, lote: { id: "l2", organizacaoId: "o1" } },
+      { sessaoId: "av3", loteId: "l2", etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date("2026-11-20T12:00:00Z"), responsavelId: "u2", origemSessao: "AV3", mensuravel: true, lote: { id: "l2", organizacaoId: "o1" } },
     ],
-    lots: async () => [],
+    lots: async () => [
+      { id: "l1", dataEntrada: new Date("2026-11-20T09:00:00Z"), statusProcessamento: "TRIAGEM_CONCLUIDA", organizacaoId: "o1" },
+      { id: "l2", dataEntrada: new Date("2026-11-20T10:30:00Z"), statusProcessamento: "TRIAGEM_CONCLUIDA", organizacaoId: "o1" },
+    ],
     saveRun: async (data: Record<string, unknown>) => { persisted = data; },
   } as unknown as AnalyticsRepository;
   const result = await new OperationalEfficiencyService(repository).execute();
-  assert.equal(result.triagensConcluidas, 2);
+  assert.equal(result.lotesComTriagemConcluida, 2);
   assert.equal(result.sessoesLegadasSincronas, 1);
   assert.equal(result.sessoesMensuraveis, 1);
-  assert.equal(result.sessoesNaoMensuraveis, 1);
-  assert.equal(result.tempoMedioMinutos, 60);
+  assert.equal(result.tempoTotalProcessoMedioMinutos, 75);
+  assert.equal(result.tempoEfetivoTriagemMedioMinutos, 60);
+  assert.equal(result.tempoEsperaMedioMinutos, 30);
   assert.equal((persisted?.resultado as any).sessoesLegadasSincronas, 1);
 });
 
@@ -102,7 +159,7 @@ test("rentabilidade ignora avaliações cuja origem demonstrativa diverge da ori
       estadoFisico: "BOM_ESTADO", pesoQuilogramas: "2",
       avaliacoesRecuperacao: [
         { demonstracao: true, valorEstimado: "900", valorRealizado: "850", metodo: "referência demo incorreta" },
-        { demonstracao: false, valorEstimado: "100", valorRealizado: "80", metodo: "avaliação real" },
+        { demonstracao: false, valorEstimado: "100", valorRealizado: "80", metodo: "avaliação real", quantidadeKg: "2", valorReferenciaPorKg: "10", percentualRecuperavel: "50", fonteReferencia: "REFERENCIA_CADASTRADA", referenciaRecuperacaoId: "reference-snapshot", observacaoReferencia: "snapshot da referência" },
       ],
     }],
     recoveryReferences: async () => [
@@ -115,6 +172,11 @@ test("rentabilidade ignora avaliações cuja origem demonstrativa diverge da ori
   assert.equal(result.valorEstimadoTotal, 100);
   assert.equal(result.valorRealizadoTotal, 80);
   assert.equal((persisted.resultado as any).avaliacoesComRealizacao, 1);
+  const detail = (result as any).detalhesEquipamentos[0];
+  assert.equal(detail.precoReferenciaPorKg, 10);
+  assert.equal(detail.percentualRecuperavel, 50);
+  assert.equal(detail.pesoMaterialRecuperavelKg, 1);
+  assert.equal(detail.referenciaRecuperacaoId, "reference-snapshot");
 });
 
 test("previsão de vida útil exige pelo menos três avaliações em datas distintas", async () => {
@@ -171,4 +233,87 @@ test("referência de recuperação seleciona primeiro marca + modelo e respeita 
   const estimate = ProfitabilityService.estimate(input, references);
   assert.equal(estimate.referenciaId, "model");
   assert.equal(estimate.valorEstimado, 30);
+});
+
+test("projeções públicas de analytics removem identificadores e dados de operadores", () => {
+  const efficiency = publicAnalyticsProjection("eficiencia-operacional", {
+    tempoTotalProcessoMedioMinutos: 90, porOperador: [{ operadorId: "u-1", operador: "Pessoa interna" }],
+    porOrganizacao: [{ organizacaoId: "org-interna", lotes: 1 }],
+  }) as any;
+  assert.equal(efficiency.tempoTotalProcessoMedioMinutos, 90);
+  assert.equal("porOperador" in efficiency, false);
+  assert.equal("porOrganizacao" in efficiency, false);
+  const profitability = publicAnalyticsProjection("rentabilidade", {
+    detalhesEquipamentos: [{ equipamentoId: "internal-id", referenciaRecuperacaoId: "ref-id", tipo: "NOTEBOOK", precoReferenciaPorKg: 10 }],
+  }) as any;
+  assert.equal(profitability.detalhesEquipamentos[0].tipo, "NOTEBOOK");
+  assert.equal("equipamentoId" in profitability.detalhesEquipamentos[0], false);
+  assert.equal("referenciaRecuperacaoId" in profitability.detalhesEquipamentos[0], false);
+  const life = publicAnalyticsProjection("vida-util", {
+    previsoes: [{ equipamentoId: "internal-id", tipo: "NOTEBOOK", mesesRemanescentesEstimados: 12 }],
+  }) as any;
+  assert.equal("equipamentoId" in life.previsoes[0], false);
+});
+
+test("relatório público de equipamentos remove barcode e IDs internos", () => {
+  const safe = sanitizePublicReportPayload("equipamentos", [{
+    id: "internal-id", codigoBarrasInterno: "GC-001", tipo: "NOTEBOOK", marca: "Marca",
+    modelo: "Modelo", anoFabricacao: 2020, estadoFisico: "BOM_ESTADO",
+    pesoQuilogramas: "2.1", statusRastreamento: "EM_TRIAGEM", valorAquisicao: "900",
+  }]) as any[];
+  assert.equal(safe[0].tipo, "NOTEBOOK");
+  assert.equal("id" in safe[0], false);
+  assert.equal("codigoBarrasInterno" in safe[0], false);
+  assert.equal("valorAquisicao" in safe[0], false);
+});
+
+
+test("backtesting compara somente previsões maduras com transições reais posteriores", async () => {
+  let persisted: any;
+  const runDate = new Date("2025-01-01T00:00:00Z");
+  const repository = {
+    lifePredictionRuns: async () => [{
+      executadoEm: runDate,
+      resultado: { previsoes: [
+        { equipamentoId: "eq-1", dataEstimadaInservivel: "2026-01-01T00:00:00.000Z" },
+        { equipamentoId: "eq-2", dataEstimadaInservivel: "2026-03-01T00:00:00.000Z" },
+        { equipamentoId: "eq-3", dataEstimadaInservivel: "2026-01-01T00:00:00.000Z" },
+      ] },
+    }],
+    inservibleTransitions: async () => [
+      { entidadeId: "eq-1", instante: new Date("2026-01-10T00:00:00Z"), detalhes: { para: "INSERVIVEL" } },
+      { entidadeId: "eq-2", instante: new Date("2026-01-15T00:00:00Z"), detalhes: { para: "INSERVIVEL" } },
+    ],
+    saveRun: async (data: any) => { persisted = data; },
+  } as unknown as AnalyticsRepository;
+  const result = await new UsefulLifeBacktestingService(repository).execute({}, new Date("2026-02-01T00:00:00Z"));
+  assert.equal(result.previsoesEncontradas, 3);
+  assert.equal(result.previsoesAvaliadas, 1);
+  assert.equal(result.previsoesAindaNaoMaduras, 1);
+  assert.equal(result.previsoesMadurasSemEventoObservado, 1);
+  assert.equal(result.erroMedioDias, 9);
+  assert.equal((persisted.resultado as any).previsoesAvaliadas, 1);
+  assert.equal(persisted.tipo, "BACKTESTING_VIDA_UTIL");
+});
+
+
+test("analytics pública resolve organização pelo X-Integration-ID sem receber UUID interno", async () => {
+  let resolvedIdentifier = "";
+  const repository = {
+    organizationForIntegration: async (_partnerId: string, integrationId: string) => { resolvedIdentifier = integrationId; return "internal-organization-uuid"; },
+    hasActivePartnerOrganization: async () => true,
+    triageEvents: async () => [],
+    lots: async () => [],
+    saveRun: async () => undefined,
+    recordPublicExecutionAudit: async () => undefined,
+  } as unknown as AnalyticsRepository;
+  const controller = new AnalyticsController(repository);
+  const identity = {
+    parceiroId: "partner", apiKeyId: "api-key", escoposEfetivos: ["analytics:write"],
+    limiteRequisicoesPorMinuto: 60, limiteParceiroPorMinuto: 60, limiteChavePorMinuto: 60,
+    maxEquipamentosPorSubmissao: 10, maxPayloadBytes: 10_000, permiteLoteSemEquipamentos: false,
+  };
+  const result = await controller.executePublicByIntegration("eficiencia-operacional", {}, identity, "request-1", "gci_public");
+  assert.equal(resolvedIdentifier, "gci_public");
+  assert.equal("organizacaoId" in (result as any), false);
 });

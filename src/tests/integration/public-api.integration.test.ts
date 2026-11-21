@@ -8,6 +8,7 @@ import type { PrismaClient } from "../../generated/prisma/client.js";
 import { buildApp } from "../../app.js";
 import { createPrismaClient } from "../../infrastructure/database/prisma.js";
 import { hashApiSecret } from "../../modules/integracoes/api-key-security.js";
+import { INTEGRATION_SCOPES } from "../../modules/integracoes/scopes.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const previousNodeEnv = process.env.NODE_ENV;
@@ -53,11 +54,11 @@ async function createOrganization(token: string, label: string): Promise<{ id: s
   return { id, cnpj };
 }
 
-async function createPartner(token: string, name: string, limits: Record<string, number> = {}) {
+async function createPartner(token: string, name: string, limits: Record<string, number> = {}, scopes: readonly string[] = ["lotes:write", "rastreabilidade:read"]) {
   assert.ok(app);
   const response = await app.inject({
     method: "POST", url: "/api/v1/parceiros", headers: adminHeaders(token),
-    payload: { nome: `${name} ${suffix}`, escopos: ["lotes:write", "rastreabilidade:read"], ...limits },
+    payload: { nome: `${name} ${suffix}`, escopos: [...scopes], ...limits },
   });
   assert.equal(response.statusCode, 201, response.body);
   const partner = response.json();
@@ -179,6 +180,23 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
   const organizationB = await createOrganization(token, "Organização Parceiro B");
   const partnerA = await createPartner(token, "Parceiro A", { limiteRequisicoesPorMinuto: 20, maxEquipamentosPorSubmissao: 3 });
   const partnerB = await createPartner(token, "Parceiro B");
+
+  // Exercita os seis escopos ponta a ponta em cadastro e atualização.
+  const allScopesPartner = await createPartner(token, "Parceiro seis escopos", {}, INTEGRATION_SCOPES);
+  assert.deepEqual([...allScopesPartner.escopos].sort(), [...INTEGRATION_SCOPES].sort());
+  const allScopesPartnerUpdate = await app.inject({
+    method: "PATCH", url: `/api/v1/parceiros/${allScopesPartner.id}`, headers: adminHeaders(token),
+    payload: { escopos: [...INTEGRATION_SCOPES] },
+  });
+  assert.equal(allScopesPartnerUpdate.statusCode, 200, allScopesPartnerUpdate.body);
+  assert.deepEqual([...allScopesPartnerUpdate.json().escopos].sort(), [...INTEGRATION_SCOPES].sort());
+  const allScopesKey = await createKey(token, allScopesPartner.id, "API Key seis escopos", [...INTEGRATION_SCOPES]);
+  const allScopesKeyUpdate = await app.inject({
+    method: "PATCH", url: `/api/v1/parceiros/${allScopesPartner.id}/chaves/${allScopesKey.id}`, headers: adminHeaders(token),
+    payload: { escopos: [...INTEGRATION_SCOPES] },
+  });
+  assert.equal(allScopesKeyUpdate.statusCode, 200, allScopesKeyUpdate.body);
+  assert.deepEqual([...allScopesKeyUpdate.json().escopos].sort(), [...INTEGRATION_SCOPES].sort());
   const partnerDetails = await app.inject({ method: "GET", url: `/api/v1/parceiros/${partnerA.id}`, headers: adminHeaders(token) });
   assert.equal(partnerDetails.statusCode, 200, partnerDetails.body);
   const defaultPartnerDetails = await app.inject({ method: "GET", url: `/api/v1/parceiros/${partnerB.id}`, headers: adminHeaders(token) });

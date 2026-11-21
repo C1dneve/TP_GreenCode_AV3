@@ -31,19 +31,21 @@ test("fila de relatórios declara cinco tentativas com backoff exponencial", () 
 
 test("solicitação pública grava relatório, Outbox e auditoria na mesma transação", async () => {
   const writes: string[] = [];
+  let persistedOrganizationId: string | undefined;
   const report = { id: randomUUID(), tipo: "equipamentos", formato: "JSON", status: "PENDING", criadoEm: new Date(), expiraEm: new Date(Date.now() + 86_400_000) };
   const db: any = {
     async $transaction(callback: (tx: any) => Promise<any>) { return callback(this); },
     organizacao: { findFirst: async () => ({ id: organizationId }) },
-    parceiroOrganizacao: { findFirst: async () => ({ id: "association" }) },
-    relatorioAssincrono: { count: async () => 0, create: async ({ data }: any) => { writes.push("report"); return { ...report, ...data }; } },
+    parceiroOrganizacao: { findFirst: async () => ({ id: "association", organizacaoId: organizationId }) },
+    relatorioAssincrono: { count: async () => 0, create: async ({ data }: any) => { persistedOrganizationId = data.organizacaoId; writes.push("report"); return { ...report, ...data }; } },
     outboxEvento: { create: async () => { writes.push("outbox"); return {}; } },
     eventoAuditoria: { create: async () => { writes.push("audit"); return {}; } },
   };
   const service = new RelatoriosAsyncService(new RelatoriosAsyncRepository(db));
-  const result = await service.requestPublic({ tipo: "equipamentos", formato: "JSON", organizacaoId: organizationId }, identity, "request-123");
+  const result = await service.requestPublic({ tipo: "equipamentos", formato: "JSON" }, identity, "request-123", "gci_public_integration");
   assert.equal(result.status, "PENDING");
   assert.ok(result.id);
+  assert.equal(persistedOrganizationId, organizationId);
   assert.deepEqual(writes, ["report", "outbox", "audit"]);
 });
 
@@ -58,7 +60,7 @@ test("parceiro sem vínculo não consegue solicitar relatório para outra organi
     eventoAuditoria: { create: async () => undefined },
   };
   const service = new RelatoriosAsyncService(new RelatoriosAsyncRepository(db));
-  await assert.rejects(service.requestPublic({ tipo: "equipamentos", formato: "CSV", organizacaoId: organizationId }, identity, "request-456"), (error: any) => error.statusCode === 403);
+  await assert.rejects(service.requestPublic({ tipo: "equipamentos", formato: "CSV" }, identity, "request-456", "gci_unknown_integration"), (error: any) => error.statusCode === 404);
   assert.equal(outboxWrites, 0);
 });
 

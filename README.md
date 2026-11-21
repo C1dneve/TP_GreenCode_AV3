@@ -64,13 +64,13 @@ docker compose logs -f api worker
 
 ## Execução local sem Docker
 
-Para executar os comandos Prisma diretamente no Windows/Ubuntu host, o serviço PostgreSQL do Compose publica a porta `5432` somente em `127.0.0.1`. O `.env.example` já contém uma `DATABASE_URL` de exemplo compatível com essa publicação. Copie o arquivo para `.env` e mantenha a senha da URL igual a `POSTGRES_PASSWORD`:
+Para executar os comandos Prisma diretamente no Windows/Ubuntu host, o serviço PostgreSQL do Compose publica a porta `5433` somente em `127.0.0.1`. O `.env.example` já contém uma `DATABASE_URL` de exemplo compatível com essa publicação. Copie o arquivo para `.env` e mantenha a senha da URL igual a `POSTGRES_PASSWORD`:
 
 ```dotenv
 POSTGRES_USER=greencode
 POSTGRES_PASSWORD=replace-with-a-local-database-password
 POSTGRES_DB=greencode
-DATABASE_URL=postgresql://greencode:replace-with-a-local-database-password@127.0.0.1:5432/greencode?schema=public
+DATABASE_URL=postgresql://greencode:replace-with-a-local-database-password@127.0.0.1:5433/greencode?schema=public
 REDIS_URL=redis://127.0.0.1:6379
 ```
 
@@ -117,9 +117,9 @@ O administrador gerencia parceiros, vínculos com organizações e o ciclo de vi
 | Submeter lote | `POST /api/v1/public/lotes` | `lotes:write`, `X-API-Key`, `X-Integration-ID`, `Idempotency-Key` |
 | Rastrear por identificador GreenCode | `GET /api/v1/public/rastreabilidade/lotes/{identificadorPublico}` | `rastreabilidade:read` e vínculo ativo |
 | Rastrear por referência do parceiro | `GET /api/v1/public/rastreabilidade/external/{externalId}` | `rastreabilidade:read` e vínculo ativo |
-| Executar análise | `POST /api/v1/public/analytics/{tipo}` | `analytics:write` e vínculo ativo |
-| Consultar análises | `GET /api/v1/public/analytics/{tipo}/historico` | `analytics:read` e vínculo ativo |
-| Solicitar relatório | `POST /api/v1/public/relatorios` | `reports:write` e vínculo ativo |
+| Executar análise | `POST /api/v1/public/analytics/{tipo}` | `analytics:write`, `X-Integration-ID` e vínculo ativo |
+| Consultar análises | `GET /api/v1/public/analytics/{tipo}/historico` | `analytics:read`, `X-Integration-ID` e vínculo ativo |
+| Solicitar relatório | `POST /api/v1/public/relatorios` | `reports:write`, `X-Integration-ID` e vínculo ativo |
 | Listar/consultar relatório | `GET /api/v1/public/relatorios[/{id}]` | `reports:read` e vínculo ativo |
 | Baixar relatório | `GET /api/v1/public/relatorios/{id}/download` | `reports:read`, proprietário parceiro e vínculo ativo |
 
@@ -132,15 +132,16 @@ Os endpoints internos, protegidos por JWT e papel administrativo/auditor, são:
 - `POST /api/v1/analytics/eficiencia-operacional`
 - `POST /api/v1/analytics/rentabilidade`
 - `POST /api/v1/analytics/vida-util`
+- `POST /api/v1/analytics/vida-util/backtesting` — compara previsões maduras com transições reais auditadas para INSERVIVEL.
 - `GET /api/v1/analytics/{tipo}/historico`
 
 As análises persistem método, versão, filtros, resultado, quantidade de observações, confiabilidade quando aplicável e sinalização de dados demonstrativos em `execucoes_analise`. O histórico público filtra registros demonstrativos.
 
-**Eficiência operacional:** usa os eventos persistidos `TRIAGEM_INICIADA` e `TRIAGEM_CONCLUIDA` da mesma sessão para calcular duração real. Apresenta média, mediana, percentis, mínimos/máximos, agregação por operador e organização, lotes pendentes e sessões incompletas.
+**Eficiência operacional:** mede o ciclo completo entre `Lote.dataEntrada` e o evento válido `TRIAGEM_CONCLUIDA` da última sessão concluída do lote. Separa tempo total do processo, tempo efetivo (`TRIAGEM_INICIADA`→`TRIAGEM_CONCLUIDA`) e espera (total menos efetivo), com média, mediana, percentis, agrupamentos e lotes/sessões pendentes. Cada lote concluído entra uma única vez; eventos incompletos ou temporalmente inconsistentes não geram duração.
 
-**Rentabilidade/recuperação:** a estimativa é `peso em kg × valor de referência por kg × percentual recuperável / 100`. A referência ativa por tipo, marca e condição física tem precedência; uma tabela-base conservadora é usada quando não há referência cadastrada. O valor efetivamente recuperado é armazenado separadamente e não é inferido.
+**Rentabilidade/recuperação:** a estimativa é `peso em kg × valor de referência por kg × percentual recuperável / 100`. A referência vigente mais específica por tipo, estado, marca e modelo tem precedência; uma tabela-base conservadora é usada quando não há referência cadastrada. O resultado explicita peso, material recuperável, preço/kg, percentual, origem e metodologia da referência. O valor efetivamente recuperado é armazenado separadamente e não é inferido.
 
-**Vida útil remanescente:** regressão linear OLS relaciona valor depreciado e idade em meses. Exige valor de aquisição positivo e, no mínimo, três avaliações em datas distintas. Falhas e manutenções ajustam a projeção; sem evidência suficiente, a previsão fica indisponível com motivo explícito. O R² e o índice de confiabilidade são medidas indicativas de aderência, não probabilidades de sobrevivência.
+**Vida útil remanescente:** regressão linear OLS relaciona valor depreciado e idade em meses. Exige valor de aquisição positivo, três avaliações válidas em datas distintas, tendência negativa e R² mínimo de 0,35. Dados futuros, estado INSERVIVEL e projeções cujo limite já tenha sido ultrapassado não geram previsão futura. Falhas e manutenções ajustam a projeção; R² e confiabilidade são medidas indicativas, não probabilidades. O endpoint de backtesting compara previsões maduras com a primeira transição auditada posterior para INSERVIVEL, reportando separadamente previsões sem evento observado.
 
 ### Triagem e histórico técnico
 
@@ -194,13 +195,16 @@ O perfil `tests` inicia PostgreSQL e Redis de teste separados. Não altere `DATA
 
 ## Nota sobre a mensuração de triagem e consultas analíticas
 
-O endpoint compatível da AV2 continua disponível, mas suas sessões são persistidas como `LEGADO_AV2`/não mensuráveis. Elas permanecem nas contagens operacionais, mas não entram no tempo médio/mediano. O fluxo AV3 explícito é mensurável com os timestamps de início e conclusão. Análises e relatórios recusam conjuntos acima de 20.000 registros com erro explícito, sem gerar saída parcial.
+O endpoint compatível da AV2 continua disponível e suas sessões legadas permanecem identificadas. A métrica de ciclo de lote exige data de entrada e evento válido de conclusão; a duração efetiva da sessão exige timestamps mensuráveis. Análises e relatórios recusam conjuntos acima de 20.000 registros com erro explícito, sem gerar saída parcial. Resultados e relatórios expostos a parceiros usam projeções públicas sem IDs internos, códigos de barras internos ou nomes de operadores.
 
 As análises que incluem massa demonstrativa mantêm referências financeiras e históricos vinculados à mesma origem (`demonstracao`) do equipamento.
 
 ## Documentação técnica
 
 - [Relatório técnico da AV3](docs/relatorio-tecnico-av3.md)
+- [Relatório de alterações desta revisão](docs/relatorio-alteracoes-revisao.md)
+- [Relatório de testes desta revisão](docs/relatorio-testes-revisao.md)
+- [Passo a passo de homologação](docs/homologacao-revisao.md)
 - [Guia de execução e testes](docs/guia-de-testes-professor.md)
 - [Arquitetura da AV3](docs/arquitetura-av3.md)
 - [Modelo de dados](docs/modelo-de-dados-av3.md)

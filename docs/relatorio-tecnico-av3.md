@@ -35,7 +35,7 @@ As FKs e índices foram definidos para relacionamentos, consultas por organizaç
 
 ## 4. Histórico operacional de triagem
 
-O módulo `triagem` fornece início, ocorrência, conclusão e consulta cronológica. O início valida o estado do lote e de seus equipamentos, atualiza o lote com controle otimista de versão e registra `TRIAGEM_INICIADA` com responsável e hora. O endpoint legado `POST /api/v1/lotes/:loteId/triagem` foi mantido e adaptado: executa a transição síncrona de forma atômica e registra início/conclusão na mesma sessão histórica, marcada como `origemSessao=LEGADO_AV2` e `mensuravel=false`. O fluxo explícito AV3 usa `origemSessao=AV3` e `mensuravel=true`. A migration aditiva também reclassifica sessões legadas criadas pela primeira entrega, identificando os textos determinísticos gravados pela rota anterior. A conclusão valida a mesma sessão, transiciona equipamentos e lote, registra `TRIAGEM_CONCLUIDA` e mantém a transação atômica. Ocorrências durante a sessão são eventos próprios. O tempo só é calculado pela diferença entre os timestamps persistidos em sessões mensuráveis AV3. Sessões síncronas AV2 permanecem no histórico e nas contagens operacionais, mas são reportadas separadamente (`sessoesLegadasSincronas`) e excluídas de média, mediana e distribuição para não confundir duração da requisição com tempo real de trabalho.
+O módulo `triagem` fornece início, ocorrência, conclusão e consulta cronológica. O início valida o estado do lote e de seus equipamentos, atualiza o lote com controle otimista de versão e registra `TRIAGEM_INICIADA` com responsável e hora. O endpoint legado `POST /api/v1/lotes/:loteId/triagem` foi mantido e adaptado: executa a transição síncrona de forma atômica e registra início/conclusão na mesma sessão histórica, marcada como `origemSessao=LEGADO_AV2` e `mensuravel=false`. O fluxo explícito AV3 usa `origemSessao=AV3` e `mensuravel=true`. A migration aditiva também reclassifica sessões legadas criadas pela primeira entrega, identificando os textos determinísticos gravados pela rota anterior. A conclusão valida a mesma sessão, transiciona equipamentos e lote, registra `TRIAGEM_CONCLUIDA` e mantém a transação atômica. Ocorrências durante a sessão são eventos próprios. A duração efetiva é calculada entre `TRIAGEM_INICIADA` e `TRIAGEM_CONCLUIDA` da mesma sessão. Sessões síncronas AV2 permanecem no histórico e são identificadas separadamente; quando seus timestamps não representam tempo real de trabalho, não entram nas métricas de duração.
 
 O módulo `historico-equipamentos` registra falhas, manutenções, avaliações de depreciação e estimativas de recuperação. O valor realizado só é gravado quando informado e a gravação usa atualização condicional para evitar sobrescrita concorrente. Operações relevantes geram auditoria.
 
@@ -43,15 +43,16 @@ O módulo `historico-equipamentos` registra falhas, manutenções, avaliações 
 
 Implementado em `OperationalEfficiencyService`.
 
-1. O repository recupera eventos de triagem persistidos e lotes segundo organização/período.
-2. Os eventos são agrupados por `sessaoId`.
-3. Sessões com início e conclusão válidos produzem duração em minutos: `conclusao.ocorridoEm - inicio.ocorridoEm`.
-4. O serviço calcula média, mediana, percentis 25/75/90, mínimo/máximo e agrupamentos por responsável e organização.
-5. Lotes em `RECEBIDO` ou `EM_TRIAGEM` são contabilizados como pendentes; sessões incompletas e sessões legadas não mensuráveis são informadas separadamente.
-6. O período filtra pela data de conclusão da sessão; o repository recupera também o início, mesmo que seja anterior ao início do período.
-7. Consultas analíticas leem até 20.001 linhas para detectar excesso; acima de 20.000 lançam `ANALYTICS_DATASET_TOO_LARGE` e não persistem um resultado parcial.
+1. O repository recupera eventos de triagem e lotes da organização/origem solicitadas. A seleção do período considera a data de conclusão; o lote pode ter entrado antes do período.
+2. Os eventos são agrupados por `sessaoId` e relacionados ao `loteId`.
+3. A conclusão válida é o evento `TRIAGEM_CONCLUIDA` de uma sessão com início válido, para lote cujo estado persistido é `TRIAGEM_CONCLUIDA`. Se houver sessões concluídas históricas múltiplas para o mesmo lote, o último evento concluído define o fim do ciclo total, enquanto todas as sessões AV3 válidas anteriores contribuem para o tempo efetivo.
+4. Tempo total: `TRIAGEM_CONCLUIDA.ocorridoEm - Lote.dataEntrada`.
+5. Tempo efetivo: `TRIAGEM_CONCLUIDA.ocorridoEm - TRIAGEM_INICIADA.ocorridoEm`.
+6. Tempo de espera: tempo total menos tempo efetivo. Datas invertidas, sessões sem conclusão e durações negativas não entram nas médias.
+7. O resultado apresenta médias/medianas, percentis, mínimo/máximo, agrupamentos por operador, organização e período, lotes pendentes e sessões incompletas. Cada lote é contado uma única vez no ciclo total.
+8. Consultas acima de 20.000 registros falham explicitamente com `ANALYTICS_DATASET_TOO_LARGE`, sem persistir resultado parcial.
 
-A execução é persistida em `execucoes_analise`, com método, versão, filtros, contagem de observações e sinalização de indisponibilidade quando não há sessões completas.
+Intervalos efetivos sobrepostos são unidos; a parte sobreposta é atribuída à sessão que começou primeiro, evitando dupla contagem. Lotes concluídos apenas com sessão legada continuam contribuindo para o tempo total, mas não para tempo efetivo/espera, que permanecem indisponíveis quando não mensuráveis. A execução é persistida em `execucoes_analise` com método `Ciclo de lote (entrada→conclusão), união de sessões efetivas e espera` e versão de modelo `3.0.0`. Sessões legadas síncronas permanecem separadas e não contaminam os tempos quando não mensuráveis.
 
 ## 6. Indicador de recuperação financeira/rentabilidade
 
@@ -59,7 +60,7 @@ Implementado em `ProfitabilityService`. O cálculo de referência é:
 
 `valor_estimado = peso_kg × valor_material_por_kg × percentual_recuperável / 100`
 
-A hierarquia de seleção é: tipo + estado + marca + modelo; tipo + estado + marca sem modelo; tipo + estado sem marca/modelo; e, por fim, tabela-base conservadora por tipo e condição. A coluna `modelo` é opcional e só pode ser preenchida quando houver marca; o resultado informa se veio de referência cadastrada ou tabela estimativa. A avaliação pode ser registrada antes da desmontagem e comparada depois com `valorRealizado`. O serviço expõe total estimado, total realizado, diferença apenas para equipamentos com realização e agregações por tipo, marca, modelo e condição física, além da relação peso/valor.
+A hierarquia de seleção é: tipo + estado + marca + modelo; tipo + estado + marca sem modelo; tipo + estado sem marca/modelo; e, por fim, tabela-base conservadora por tipo e condição. A coluna `modelo` é opcional e só pode ser preenchida quando houver marca; o resultado informa se veio de referência cadastrada ou tabela estimativa. A avaliação pode ser registrada antes da desmontagem e comparada depois com `valorRealizado`. O serviço expõe total e média estimados, total e média realizados apenas quando há registro, diferença somente para equipamentos com realização, agrupamentos com quantidades/distribuições e relação peso/valor. Cada linha de equipamento apresenta peso considerado, material recuperável, preço de referência/kg, percentual recuperável, fonte e metodologia da referência. A referência cadastrada permanece distinguível da tabela-base estimativa.
 
 Quando `incluirDemonstracao=true`, cada equipamento só usa referências e avaliações de recuperação com o mesmo indicador `demonstracao` do próprio equipamento; dados reais e demonstrativos não se cruzam. O valor estimado não é apresentado como receita ou dinheiro efetivamente recuperado. Sem registros de realização, a coluna permanece indisponível. O método e o resultado analítico são persistidos para comparação histórica.
 
@@ -67,11 +68,16 @@ Quando `incluirDemonstracao=true`, cada equipamento só usa referências e avali
 
 Implementada em `UsefulLifeService` com `simple-statistics` e regressão linear OLS. Cada histórico de depreciação vira um ponto `(idade_em_meses, valor_estimado)`. O modelo ajusta `valor = intercepto + inclinação × idade`. Uma tendência com inclinação negativa permite estimar a idade em que a linha alcançaria zero; a diferença para a idade atual produz meses remanescentes.
 
-A previsão exige valor de aquisição positivo e pelo menos três avaliações em datas distintas. Inclinação não negativa, amostra insuficiente ou ausência de registros gera previsão indisponível com motivo. A projeção é ajustada por heurística documentada: penalidade de até 6% por falha, limitada a 50%, e crédito de até 2% por manutenção, limitado a 15%. A condição física compõe o índice de qualidade junto ao R².
+A previsão exige valor de aquisição positivo e pelo menos três avaliações válidas, não futuras, em datas distintas. Inclinação não negativa, R² inferior a 0,35, equipamento já INSERVIVEL, amostra insuficiente ou limite de depreciação projetado no passado gera previsão indisponível com motivo. A projeção é ajustada por heurística documentada: penalidade de até 6% por falha, limitada a 50%, e crédito de até 2% por manutenção, limitado a 15%. A condição física compõe o índice de qualidade junto ao R².
 
 O R² descreve a aderência do ajuste aos dados observados. O índice de confiabilidade combina essa aderência com estado, falhas e manutenções; não é uma probabilidade calibrada. O modelo é suporte à decisão e exige calibração com histórico real representativo antes de uso operacional de alto impacto.
 
 Resultados, filtros, método, versão, número de observações, confiabilidade e motivos de indisponibilidade ficam persistidos em `execucoes_analise`. É possível consultar histórico e comparar novas execuções.
+
+### Backtesting de vida útil
+
+`UsefulLifeBacktestingService` consulta snapshots históricos de `VIDA_UTIL_REMANESCENTE` e eventos de auditoria `ALTERACAO_ESTADO_FISICO` cujo detalhe `para` seja `INSERVIVEL`. Uma previsão só é candidata quando sua data estimada já foi alcançada e a transição real é posterior ao instante de execução do modelo. A comparação usa a primeira transição posterior por equipamento real (`demonstracao=false`), calcula erro assinado em dias, erro absoluto médio e erro percentual absoluto médio (MAPE) usando o horizonte previsto como denominador. Previsões maduras sem evento observado e previsões ainda não maduras são contabilizadas separadamente, sem serem tratadas como acerto ou erro. O resultado é persistido como `BACKTESTING_VIDA_UTIL`; a nova enumeração é adicionada por migration aditiva. A limitação central é que a ausência de transição auditada não prova que o equipamento continuou utilizável: pode representar censura ou falta de registro.
+
 
 ## 8. Dados demonstrativos
 
@@ -99,7 +105,7 @@ O CSV usa escape de aspas/delimitadores e neutraliza campos iniciados por sinais
 
 A validade padrão é de sete dias, configurável entre 1 e 30 por `REPORT_EXPIRATION_DAYS`. O worker faz limpeza horária. Falha de remoção mantém a referência para que uma próxima execução tente novamente. O volume Docker `greencode_reports` persiste os arquivos entre reinicializações.
 
-A listagem pública, consulta e download filtram pelo parceiro proprietário, escopo efetivo e associação ativa com a organização. A API não retorna o caminho físico do arquivo.
+A listagem pública, consulta e download filtram pelo parceiro proprietário, escopo efetivo e associação ativa com a organização. A API não retorna o caminho físico do arquivo. As rotas públicas de analytics e solicitação de relatórios resolvem a organização por `X-Integration-ID`, evitando que o parceiro envie UUID interno de organização; o identificador público é validado contra o vínculo ativo do próprio parceiro.
 
 ## 11. Swagger, autenticação e autorização
 
@@ -123,23 +129,25 @@ No Windows 10+ recomenda-se Docker Desktop/WSL2; no Ubuntu 24.04.03+ recomenda-s
 
 ## 14. Evidências de validação e limitações do ambiente
 
-Foram adicionados testes unitários para estatística, regressão OLS, eficiência operacional com sessão incompleta, distinção entre sessão legada AV2 e sessão mensurável AV3, hierarquia de referências financeiras por modelo/marca, segregação de referências e avaliações pela origem demonstrativa, rejeição explícita de conjuntos acima de 20.000 registros, cenários de vida útil com dados suficientes/insuficientes, depreciação linear e serialização CSV/JSON. Os testes de integração verificam metadados persistidos no endpoint legado e no fluxo AV3 explícito, além de consultar a análise operacional para comprovar a exclusão das sessões legadas da duração média.
+Nesta revisão foram alterados serviços analíticos, projeções públicas, sanitização de relatórios, testes unitários, documentação e configuração da porta publicada do PostgreSQL. Foram adicionados testes unitários para o ciclo entrada→conclusão/triagem/espera, backtesting e remoção de identificadores internos em projeções públicas. Os testes já existentes foram ajustados para a nova semântica da eficiência operacional.
 
-A migration `20261120230000_legacy_triage_measurement` é aditiva: cria `origemSessao` e `mensuravel`, classifica novas sessões AV2 como `LEGADO_AV2`/não mensuráveis e reclassifica registros legados da primeira entrega a partir das observações determinísticas gravadas pela rota síncrona. As duas migrations anteriores não foram reescritas.
+**Validação executada nesta revisão:**
 
-As consultas analíticas leem no máximo 20.001 linhas para detectar excedente. Se houver mais de 20.000 registros em qualquer conjunto analítico (eventos de triagem, lotes, equipamentos, referências, avaliações ou históricos de depreciação/falhas/manutenção), o serviço lança `ANALYTICS_DATASET_TOO_LARGE` e não salva o resultado parcial. Relatórios operacionais também falham com `REPORT_DATASET_TOO_LARGE` quando ultrapassam o limite, sem gerar arquivo truncado. Quando o período é filtrado, uma sessão é selecionada pela conclusão e seus eventos de início/ocorrência também são recuperados, mesmo quando o início ocorreu antes do período.
+| Verificação | Comando/ação | Resultado |
+|---|---|---|
+| Leitura dos ZIPs AV2/AV3 e inventário | inspeção dos arquivos compactados | PASSOU |
+| Comparação das três migrations-base AV2 x AV3 | comparação textual após normalização de CRLF/LF | PASSOU — conteúdo equivalente |
+| Instalação de dependências | `npm ci --ignore-scripts --no-audit --no-fund` | BLOQUEADO POR AMBIENTE — execução excedeu o limite de tempo; registry não concluiu a instalação |
+| Build | `npm run build` | BLOQUEADO POR AMBIENTE — `prisma: not found` porque `npm ci` não concluiu |
+| Prisma validate/generate, migrations e seed | scripts npm correspondentes | NÃO EXECUTADO — Prisma CLI ausente |
+| Testes unitários e integração | `npm test` e `npm run test:integration` | NÃO EXECUTADO — dependências ausentes; além disso, Node 22 no ambiente não atende ao requisito Node 24 |
+| PostgreSQL/Redis/worker | Docker Compose e testes reais | BLOQUEADO POR AMBIENTE — Docker e serviços não disponíveis |
+| Compatibilidade Windows/Ubuntu | execução nativa em ambos os sistemas | NÃO EXECUTADO |
 
-**A homologação executável não foi aprovada neste ambiente.** O ambiente possui Node.js `v22.16.0`, mas a aplicação exige Node 24; Docker, PostgreSQL, Redis e Prisma CLI não estão disponíveis. Não foi possível gerar o Prisma Client, aplicar migrations em banco de testes vazio, executar seed ou exercitar workers/agendamentos/filas contra Redis.
+O ambiente disponível possui Node.js `v22.16.0`; o projeto exige `>=24 <25`. Docker, PostgreSQL CLI e serviços Redis/PostgreSQL não estão disponíveis. A tentativa de `npm ci` excedeu o limite de execução e não instalou o Prisma CLI/TypeScript locais. Por isso, não há evidência de build, typecheck, validação Prisma, migrations, seed, worker ou testes integrados nesta revisão. Não se declara homologação.
 
-Resultados reais dos comandos desta revisão:
+As três migrations iniciais AV2 (`20261020200000_init`, `20261021170000_equipamento_lote_opcional` e `20261022080000_usuario_auth_version`) possuem conteúdo equivalente na AV3 após normalização de finais de linha. As migrations AV3 permanecem aditivas; a nova migration `20261121120000_useful_life_backtesting` acrescenta somente o valor `BACKTESTING_VIDA_UTIL` ao enum `TipoAnalise`. A instalação limpa e a migração AV2→AV3 ainda precisam ser executadas em bancos descartáveis separados.
 
-- `npm install`: falhou com `EAI_AGAIN` ao resolver `registry.npmjs.org`.
-- `npm ci`: falhou com o mesmo erro DNS `EAI_AGAIN`; não concluiu instalação.
-- `npm run prisma:validate`, `npm run prisma:generate`, `npm run db:deploy`, `npm run db:seed`, `npm run build`, `npm test` e `npm run test:integration`: todos encerraram com código 127 (`prisma: not found`), antes de executar validação, migrations, geração de client, build ou testes.
-- `tsc --noEmit -p tsconfig.json`: bloqueado por definições de tipos ausentes (`@types/node`, `@types/pg` e tipos transitivos incompletos em `node_modules`).
-- Transpiração de sintaxe com TypeScript 5.8.3: 117 arquivos TypeScript examinados, zero diagnósticos sintáticos. Isso não equivale a typecheck nem execução de testes.
-- `git diff --check`: aprovado, sem erros de whitespace.
+O `package-lock.json` foi preservado sem alteração. Não foi possível regenerá-lo com segurança sem a instalação completa das dependências; qualquer atualização parcial seria inadequada. A próxima homologação deve executar em Node 24 com acesso ao registry: `npm ci`, `npm run prisma:validate`, `npm run prisma:generate`, `npm run db:deploy`, `npm run db:seed`, `npm run build`, `npm test` e `npm run test:integration`. Os testes de integração devem utilizar exclusivamente o banco `greencode_test` fornecido pelo perfil `tests`; nunca o banco de desenvolvimento.
 
-O `package-lock.json` não pôde ser atualizado: o registry npm não resolveu e o cache local não contém os pacotes BullMQ/simple-statistics. Para não criar um lockfile parcial ou inventado, ele foi preservado sem alterações e não está no diff incremental. Portanto, a instalação reproduzível ainda depende de executar `npm install` em ambiente Node 24 com acesso ao registry; em seguida, validar com `npm ci` e incluir o lockfile atualizado na revisão de entrega.
-
-Em ambiente compatível, execute `npm install`, `npm ci`, `npm run prisma:validate`, `npm run prisma:generate`, `npm run db:deploy`, `npm run db:seed`, `npm run build`, `npm test` e `npm run test:integration`. Use exclusivamente o banco de teste separado definido no Compose; não aponte os testes para a base principal. Até essa execução, migrations, workers, filas, scheduler e testes integrados permanecem pendentes de homologação real.
+Até essa execução, a implementação é uma primeira rodada de correções estáticas e testes adicionados, não uma entrega 100% homologada.

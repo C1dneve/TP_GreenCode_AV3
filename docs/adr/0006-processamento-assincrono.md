@@ -2,24 +2,28 @@
 
 ## Status
 
-Proposto para uma fase futura da AV3. Não implementado no primeiro grande passo.
+Implementado no código AV3; homologação integrada com Redis/PostgreSQL pendente.
 
 ## Contexto
 
-Análises e relatórios podem ser demorados e não devem manter uma requisição HTTP aberta durante todo o processamento. O sistema precisa registrar a solicitação, processá-la em segundo plano e permitir consulta de status e resultado.
+Análises agendadas e relatórios podem ser demorados e não devem manter uma requisição HTTP aberta durante todo o processamento. O sistema registra a solicitação, processa em segundo plano e permite consulta de status e resultado.
 
-## Decisão proposta
+## Decisão adotada
 
-Utilizar BullMQ com Redis e um processo worker separado, mantendo ambos no mesmo repositório e no monólito modular. O PostgreSQL será a fonte definitiva do estado de negócio e dos resultados; Redis será infraestrutura de fila, não o histórico oficial.
+Utilizar BullMQ com Redis e processo worker separado, mantendo API e worker no mesmo repositório e no monólito modular. PostgreSQL é a fonte definitiva do estado de negócio e dos resultados; Redis coordena entrega e agendamento, mas não substitui o histórico oficial.
 
 ## Consistência de publicação
 
-Evitar que uma execução fique registrada no PostgreSQL sem que o job correspondente seja publicado no Redis. Avaliar Transactional Outbox ou mecanismo equivalente de reconciliação/republicação. A decisão final deve ser registrada após comparação de complexidade e recuperação de falhas.
+A API grava `RelatorioAssincrono` e `OutboxEvento` na mesma transação PostgreSQL. O worker publica eventos pendentes com `jobId` estável e marca a Outbox somente após a aceitação do job. A publicação repetida utiliza identificador estável; o processamento também utiliza estado condicional e lease para evitar que workers antigos sobrescrevam resultados de uma execução retomada.
 
-## Retry e falhas
+## Retry, lease e recuperação
 
-Repetir somente falhas transitórias, com backoff exponencial e limite. Erros de validação não devem ser repetidos. Definir estado terminal, DLQ ou mecanismo equivalente para falhas não recuperáveis.
+Relatórios utilizam cinco tentativas e backoff exponencial com atraso inicial de três segundos. A fila de análises utiliza cinco tentativas e atraso inicial de cinco segundos. O serviço de relatório registra heartbeat e lease; execuções `PROCESSING` sem heartbeat recente podem ser retomadas. O estado de falha é persistido no PostgreSQL. A classificação refinada entre falha transitória e permanente ainda pode ser evoluída para evitar tentativas desnecessárias em erros irrecuperáveis.
 
-## Validação necessária
+## Agendamento
 
-Testar reinício do worker, publicação interrompida, recuperação de jobs pendentes, reprocessamento idempotente, retry, falha terminal e concorrência por parceiro. Esta decisão não deve ser considerada aprovada antes do desenho, implementação e testes dessa fase.
+Análises recorrentes são registradas com `upsertJobScheduler` e IDs estáveis no Redis. Intervalos são configuráveis por variáveis de ambiente; o worker separado executa os serviços analíticos e persiste snapshots no PostgreSQL.
+
+## Validação pendente
+
+Executar testes reais com Redis/PostgreSQL para indisponibilidade Redis, interrupção durante processamento, reentrega, recuperação de lease, concorrência, retry, falha terminal, expiração e reinicialização do worker. A implementação existente não deve ser considerada homologada até essas execuções.

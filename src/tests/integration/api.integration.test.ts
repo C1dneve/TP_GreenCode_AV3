@@ -141,7 +141,9 @@ test("jornada HTTP real: organização → contrato → lote → equipamento →
   assert.equal(legacyAnalytics.statusCode, 200, legacyAnalytics.body);
   assert.equal(legacyAnalytics.json().sessoesLegadasSincronas, 1);
   assert.equal(legacyAnalytics.json().sessoesMensuraveis, 0);
-  assert.equal(legacyAnalytics.json().tempoMedioMinutos, null, "triagem síncrona legada não pode contaminar a duração média");
+  assert.equal(typeof legacyAnalytics.json().tempoTotalProcessoMedioMinutos, "number", "o ciclo total continua mensurável entre a entrada do lote e a conclusão");
+  assert.equal(legacyAnalytics.json().tempoEfetivoTriagemMedioMinutos, null, "triagem síncrona legada não pode contaminar o tempo efetivo de triagem");
+  assert.equal(legacyAnalytics.json().tempoEsperaMedioMinutos, null, "sem sessão AV3 mensurável, o tempo de espera não deve ser estimado");
   const repeatedLegacyTriage = await app.inject({ method: "POST", url: `/api/v1/lotes/${lotId}/triagem`, headers: authorized(token), payload: { versaoEsperada: triage.json().versao } });
   assert.equal(repeatedLegacyTriage.statusCode, 409, repeatedLegacyTriage.body);
   assert.equal(await prisma!.historicoTriagem.count({ where: { loteId: lotId } }), 2, "a compatibilidade AV2 não pode criar nova sessão de triagem");

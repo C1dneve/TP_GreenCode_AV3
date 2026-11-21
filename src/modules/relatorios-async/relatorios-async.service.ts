@@ -9,23 +9,24 @@ import { ProfitabilityService } from "../analytics/profitability.service.js";
 import { UsefulLifeService } from "../analytics/useful-life.service.js";
 import { OperationalEfficiencyService } from "../analytics/operational-efficiency.service.js";
 import { RelatoriosAsyncRepository } from "./relatorios-async.repository.js";
-import { serializeReport } from "./report-format.js";
+import { sanitizePublicReportPayload, serializeReport } from "./report-format.js";
 
 const ALLOWED_TYPES = new Set(["operacional", "equipamentos", "triagem", "rentabilidade", "vida-util"]);
 const EXPIRATION_DAYS = Math.max(1, Math.min(30, Number(process.env.REPORT_EXPIRATION_DAYS ?? 7)) || 7);
 const STORAGE_ROOT = resolve(process.env.REPORTS_DIR?.trim() || "./storage/reports");
 const REPORT_ROW_LIMIT = 20_000;
 
-function validateRequest(input: any) {
+function validateRequest(input: any, organizationIdOverride?: string) {
   if (!input || !ALLOWED_TYPES.has(input.tipo)) throw errors.badRequest("INVALID_REPORT_TYPE", "Tipo de relatório inválido.");
   if (!(["CSV", "JSON"].includes(input.formato))) throw errors.badRequest("INVALID_REPORT_FORMAT", "Formato deve ser CSV ou JSON.");
-  if (typeof input.organizacaoId !== "string" || !/^[0-9a-f-]{36}$/i.test(input.organizacaoId)) throw errors.badRequest("VALIDATION_ERROR", "organizacaoId inválido.");
+  const organizacaoId = organizationIdOverride ?? input.organizacaoId;
+  if (typeof organizacaoId !== "string" || !/^[0-9a-f-]{36}$/i.test(organizacaoId)) throw errors.badRequest("VALIDATION_ERROR", "Organização inválida.");
   const filters: any = {};
   if (input.de !== undefined) { const date = new Date(input.de); if (!Number.isFinite(date.getTime())) throw errors.badRequest("VALIDATION_ERROR", "Data inicial inválida."); filters.de = date.toISOString(); }
   if (input.ate !== undefined) { const date = new Date(input.ate); if (!Number.isFinite(date.getTime())) throw errors.badRequest("VALIDATION_ERROR", "Data final inválida."); filters.ate = date.toISOString(); }
   if (filters.de && filters.ate && filters.de > filters.ate) throw errors.badRequest("VALIDATION_ERROR", "de não pode ser posterior a ate.");
-  filters.organizacaoId = input.organizacaoId;
-  return { tipo: input.tipo as string, formato: input.formato as string, organizacaoId: input.organizacaoId as string, filtros: filters };
+  filters.organizacaoId = organizacaoId;
+  return { tipo: input.tipo as string, formato: input.formato as string, organizacaoId: organizacaoId as string, filtros: filters };
 }
 
 
@@ -38,9 +39,18 @@ export class RelatoriosAsyncService {
     return this.createRequest(data, { solicitanteUsuarioId: actorId, requestId });
   }
 
-  async requestPublic(input: any, identity: IntegrationIdentity, requestId: string) {
+  async requestPublic(input: any, identity: IntegrationIdentity, requestId: string, identificadorPublico: string) {
     if (!identity.escoposEfetivos.includes("reports:write")) throw errors.forbidden("A API Key não possui o escopo reports:write.");
-    const data = validateRequest(input);
+    if (!identificadorPublico?.trim()) throw errors.badRequest("MISSING_INTEGRATION_HEADER", "Informe X-Integration-ID.");
+    const association = await this.db.parceiroOrganizacao.findFirst({
+      where: {
+        parceiroId: identity.parceiroId, identificadorPublico: identificadorPublico.trim(), ativo: true,
+        parceiro: { ativo: true }, organizacao: { ativo: true },
+      },
+      select: { organizacaoId: true },
+    });
+    if (!association) throw errors.notFound("INTEGRATION_NOT_FOUND", "Integração não encontrada.");
+    const data = validateRequest(input, association.organizacaoId);
     return this.createRequest(data, { parceiroId: identity.parceiroId, apiKeyId: identity.apiKeyId, requestId });
   }
 
@@ -74,8 +84,8 @@ export class RelatoriosAsyncService {
   async listPublic(identity: IntegrationIdentity, query: any) {
     if (!identity.escoposEfetivos.includes("reports:read")) throw errors.forbidden("A API Key não possui o escopo reports:read.");
     const page = Math.max(1, Math.min(10000, Number(query.page) || 1)); const pageSize = Math.max(1, Math.min(100, Number(query.pageSize) || 20));
-    const where = { parceiroId: identity.parceiroId, organizacao: { ativo: true, parceiros: { some: { parceiroId: identity.parceiroId, ativo: true } } }, ...(query.status ? { status: query.status } : {}), ...(query.organizacaoId ? { organizacaoId: query.organizacaoId } : {}) };
-    const [data, total] = await Promise.all([this.db.relatorioAssincrono.findMany({ where, orderBy: { criadoEm: "desc" }, skip: (page - 1) * pageSize, take: pageSize, select: { id: true, tipo: true, formato: true, status: true, progresso: true, organizacaoId: true, criadoEm: true, iniciadoEm: true, concluidoEm: true, expiraEm: true, mensagemErro: true } }), this.db.relatorioAssincrono.count({ where })]);
+    const where = { parceiroId: identity.parceiroId, organizacao: { ativo: true, parceiros: { some: { parceiroId: identity.parceiroId, ativo: true } } }, ...(query.status ? { status: query.status } : {}) };
+    const [data, total] = await Promise.all([this.db.relatorioAssincrono.findMany({ where, orderBy: { criadoEm: "desc" }, skip: (page - 1) * pageSize, take: pageSize, select: { id: true, tipo: true, formato: true, status: true, progresso: true, criadoEm: true, iniciadoEm: true, concluidoEm: true, expiraEm: true, mensagemErro: true } }), this.db.relatorioAssincrono.count({ where })]);
     return { data, meta: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } };
   }
 
@@ -87,7 +97,7 @@ export class RelatoriosAsyncService {
 
   async getPublic(id: string, identity: IntegrationIdentity) {
     if (!identity.escoposEfetivos.includes("reports:read")) throw errors.forbidden("A API Key não possui o escopo reports:read.");
-    const report = await this.db.relatorioAssincrono.findFirst({ where: { id, parceiroId: identity.parceiroId, organizacao: { ativo: true, parceiros: { some: { parceiroId: identity.parceiroId, ativo: true } } } }, select: { id: true, tipo: true, formato: true, status: true, organizacaoId: true, criadoEm: true, iniciadoEm: true, concluidoEm: true, progresso: true, mensagemErro: true, arquivoPath: true, expiraEm: true, tamanhoBytes: true } });
+    const report = await this.db.relatorioAssincrono.findFirst({ where: { id, parceiroId: identity.parceiroId, organizacao: { ativo: true, parceiros: { some: { parceiroId: identity.parceiroId, ativo: true } } } }, select: { id: true, tipo: true, formato: true, status: true, criadoEm: true, iniciadoEm: true, concluidoEm: true, progresso: true, mensagemErro: true, arquivoPath: true, expiraEm: true, tamanhoBytes: true } });
     if (!report) throw errors.notFound("REPORT_NOT_FOUND", "Relatório não encontrado.");
     return { ...report, downloadDisponivel: report.status === "COMPLETED" && report.expiraEm > new Date() && Boolean(report.arquivoPath), arquivoPath: undefined };
   }
@@ -160,6 +170,7 @@ export class RelatoriosAsyncService {
       await mkdir(STORAGE_ROOT, { recursive: true });
       const extension = String(report.formato).toLowerCase(); const name = `${reportId}-${leaseToken}.${extension}`;
       targetPath = join(STORAGE_ROOT, name); tempPath = join(STORAGE_ROOT, `.${reportId}-${leaseToken}.tmp`);
+      if (report.parceiroId) payload = sanitizePublicReportPayload(report.tipo, payload);
       const content = serializeReport(payload, report.formato as "CSV" | "JSON");
       await writeFile(tempPath, content, { encoding: "utf8", flag: "wx" });
       await rename(tempPath, targetPath); tempPath = null;

@@ -11,7 +11,8 @@ export interface AnalyticsTriageEventRecord {
   sessaoId: string;
   responsavelId: string;
   responsavel: { id: string; nome: string } | null;
-  lote: { organizacaoId: string } | null;
+  loteId: string;
+  lote: { id: string; organizacaoId: string } | null;
   etapa: string;
   ocorridoEm: Date;
   origemSessao: string | null;
@@ -82,7 +83,7 @@ export class AnalyticsRepository {
     }
     const rows = await model.findMany<AnalyticsTriageEventRecord>({
       where,
-      include: { responsavel: { select: { id: true, nome: true } }, lote: { select: { organizacaoId: true } } },
+      include: { responsavel: { select: { id: true, nome: true } }, lote: { select: { id: true, organizacaoId: true, dataEntrada: true } } },
       orderBy: [{ ocorridoEm: "asc" }, { id: "asc" }], take: queryLimit,
     });
     ensureWithinLimit("histórico de triagem", rows);
@@ -184,6 +185,43 @@ export class AnalyticsRepository {
       manutencoes: maintenanceByEquipment.get(row.id) ?? [],
     }));
   }
+  async lifePredictionRuns(filters: AnalyticsFilters = {}) {
+    const rows = await (this.prisma as any).execucaoAnalise.findMany({
+      where: {
+        tipo: "VIDA_UTIL_REMANESCENTE", demonstracao: false,
+        ...(filters.organizacaoId ? { organizacaoId: filters.organizacaoId } : {}),
+        ...(filters.de || filters.ate ? { executadoEm: { ...(filters.de ? { gte: filters.de } : {}), ...(filters.ate ? { lte: filters.ate } : {}) } } : {}),
+      },
+      select: { executadoEm: true, resultado: true, organizacaoId: true },
+      orderBy: [{ executadoEm: "asc" }, { id: "asc" }],
+      take: queryLimit,
+    });
+    ensureWithinLimit("execuções históricas de vida útil", rows);
+    return rows;
+  }
+  async inservibleTransitions(filters: AnalyticsFilters = {}) {
+    const rows = await (this.prisma as any).eventoAuditoria.findMany({
+      where: {
+        entidade: "Equipamento", acao: "ALTERACAO_ESTADO_FISICO",
+        ...(filters.organizacaoId ? { organizacaoId: filters.organizacaoId } : {}),
+      },
+      select: { entidadeId: true, instante: true, detalhes: true, organizacaoId: true },
+      orderBy: [{ instante: "asc" }, { id: "asc" }],
+      take: 20_001,
+    });
+    ensureWithinLimit("transições reais de estado físico", rows);
+    const transitions = rows.filter((row: any) => row.detalhes && typeof row.detalhes === "object" && (row.detalhes as any).para === "INSERVIVEL");
+    if (!transitions.length) return [];
+    const equipmentIds = [...new Set(transitions.map((row: any) => row.entidadeId))];
+    const realEquipment = await (this.prisma as any).equipamento.findMany({
+      where: { id: { in: equipmentIds }, demonstracao: false },
+      select: { id: true },
+      take: queryLimit,
+    });
+    ensureWithinLimit("equipamentos reais para backtesting", realEquipment);
+    const realIds = new Set(realEquipment.map((item: any) => item.id));
+    return transitions.filter((row: any) => realIds.has(row.entidadeId));
+  }
   async saveRun(data: Record<string, unknown>) {
     const model = (this.prisma as any).execucaoAnalise;
     const key = data.chaveExecucao;
@@ -194,6 +232,17 @@ export class AnalyticsRepository {
   }
   previousRuns(tipo: string, organizacaoId?: string, take = 20, incluirDemonstracao = true) {
     return (this.prisma as any).execucaoAnalise.findMany({ where: { tipo: tipo as never, ...(organizacaoId ? { organizacaoId } : {}), ...(incluirDemonstracao ? {} : { demonstracao: false }) }, orderBy: { executadoEm: "desc" }, take });
+  }
+  async organizationForIntegration(parceiroId: string, identificadorPublico: string): Promise<string | null> {
+    const association = await (this.prisma as any).parceiroOrganizacao.findFirst({
+      where: {
+        parceiroId, identificadorPublico, ativo: true,
+        parceiro: { ativo: true },
+        organizacao: { ativo: true },
+      },
+      select: { organizacaoId: true },
+    });
+    return association?.organizacaoId ?? null;
   }
   async hasActivePartnerOrganization(parceiroId: string, organizacaoId: string) {
     const association = await (this.prisma as any).parceiroOrganizacao.findFirst({ where: { parceiroId, organizacaoId, ativo: true, organizacao: { ativo: true } }, select: { id: true } });

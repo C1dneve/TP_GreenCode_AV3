@@ -2,9 +2,9 @@
 
 As histórias estão organizadas por épico, prioridade e critérios de aceite, seguindo a estrutura usada na documentação AV2. Elas combinam o enunciado AV3 com as decisões de produto aprovadas. Para executar a jornada manual e os testes negativos, consulte o [Guia de execução e testes](guia-de-testes-professor.md).
 
-> Os critérios de aceite detalhados nesta revisão cobrem o primeiro grande passo aprovado (parceiros, API Keys, segurança e API pública inicial). As histórias analíticas e assíncronas permanecem em nível de visão e serão detalhadas antes de suas respectivas implementações.
+> Os épicos abaixo representam o escopo funcional da AV3. Os módulos de analytics, API pública e processamento assíncrono já estão presentes no código. A homologação integrada ainda depende da execução dos testes em ambiente Node 24, PostgreSQL e Redis.
 
-## Épico E1 — Inteligência analítica (fase posterior)
+## Épico E1 — Inteligência analítica
 
 - **US-ANA-01:** Como administrador, quero consultar tempo médio de processamento de lotes para identificar gargalos.
 - **US-ANA-02:** Como gestor, quero comparar operadores e períodos para entender variações de eficiência.
@@ -13,7 +13,7 @@ As histórias estão organizadas por épico, prioridade e critérios de aceite, 
 - **US-ANA-05:** Como usuário autorizado, quero consultar previsões históricas e comparar previsão com resultado observado.
 - **US-ANA-06:** Como usuário, quero saber método, amostra, qualidade e motivo quando a previsão não puder ser calculada.
 
-## Épico E2 — Gestão de parceiros (primeiro grande passo)
+## Épico E2 — Gestão de parceiros
 
 - **US-PAR-01:** Como Administrador GreenCode, quero cadastrar, consultar, atualizar, ativar e desativar parceiros.
 - **US-PAR-02:** Como Administrador, quero autorizar e remover organizações vinculadas a um parceiro.
@@ -49,7 +49,7 @@ As histórias estão organizadas por épico, prioridade e critérios de aceite, 
 - O histórico permite filtrar por parceiro, período, ação e resultado, conforme os filtros suportados pelo módulo de auditoria.
 - Os detalhes não podem conter segredo de API Key, hash, token, cabeçalho Authorization ou credenciais.
 
-## Épico E3 — API Keys e autenticação pública (primeiro grande passo)
+## Épico E3 — API Keys e autenticação pública
 
 - **US-KEY-01:** Como Administrador, quero emitir múltiplas chaves nomeadas para um parceiro.
 - **US-KEY-02:** Como Administrador, quero definir escopos e validade opcional da chave.
@@ -92,7 +92,7 @@ As histórias estão organizadas por épico, prioridade e critérios de aceite, 
 - Logs, respostas de erro, auditoria, telemetria e Swagger não podem revelar segredo, hash ou cabeçalho de autenticação.
 - Comparação do segredo deve usar mecanismo seguro apropriado ao formato de hash adotado.
 
-## Épico E4 — Submissão e integração pública (primeiro grande passo)
+## Épico E4 — Submissão e integração pública
 
 - **US-INT-01:** Como parceiro autorizado, quero enviar um lote sem equipamentos.
 - **US-INT-02:** Como parceiro autorizado, quero enviar um lote com equipamentos em uma única submissão.
@@ -136,7 +136,7 @@ As histórias estão organizadas por épico, prioridade e critérios de aceite, 
 - Chave sem escopo, vínculo de organização revogado/inativo ou recurso não autorizado não permite leitura.
 - Há testes positivos e negativos cobrindo isolamento entre parceiros, chaves e organizações.
 
-## Épico E5 — Jobs e relatórios assíncronos (fase posterior)
+## Épico E5 — Jobs e relatórios assíncronos
 
 - **US-JOB-01:** Como usuário/parceiro autorizado, quero solicitar análise ou relatório demorado sem manter a conexão aberta.
 - **US-JOB-02:** Como solicitante, quero receber um task ID e consultar o status por polling.
@@ -151,7 +151,7 @@ As histórias estão organizadas por épico, prioridade e critérios de aceite, 
 - **US-OPS-01:** Como gestor, quero indicadores diários, previsões semanais e execução manual.
 - **US-OPS-02:** Como mantenedor, quero executar ambiente em Docker Compose e seguir guia para Windows e Ubuntu.
 
-### Critérios de aceite — auditoria e documentação no primeiro grande passo
+### Critérios de aceite — auditoria e documentação
 
 **US-AUD-01 — Auditoria de operações internas e externas**
 - A AV3 amplia `EventoAuditoria` existente, preservando os registros AV2 e a relação com usuário interno.
@@ -163,7 +163,7 @@ As histórias estão organizadas por épico, prioridade e critérios de aceite, 
 - Há testes de persistência e consulta de auditoria para os novos tipos de ator.
 
 **US-DOC-01 — OpenAPI**
-- Todas as rotas públicas implementadas no primeiro grande passo aparecem no Swagger/OpenAPI sob namespace e versão próprios.
+- Todas as rotas públicas implementadas no escopo público aparecem no Swagger/OpenAPI sob namespace e versão próprios.
 - A documentação descreve autenticação, escopos exigidos, parâmetros, schemas, exemplos de requisição/resposta e códigos de erro.
 - Exemplos usam valores demonstrativos e nunca credenciais reais.
 - Rotas públicas e internas/admin permanecem visualmente e funcionalmente separadas.

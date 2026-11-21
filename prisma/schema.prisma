@@ -69,6 +69,7 @@ enum TipoAnalise {
   EFICIENCIA_OPERACIONAL
   RENTABILIDADE_EQUIPAMENTOS
   VIDA_UTIL_REMANESCENTE
+  BACKTESTING_VIDA_UTIL
 }
 
 model Usuario {
@@ -453,6 +454,7 @@ model ReferenciaRecuperacao {
   @@index([tipo, estadoFisico, ativa])
   @@index([tipo, estadoFisico, marca, modelo, ativa])
   @@index([demonstracao, ativa])
+  avaliacoes AvaliacaoRecuperacao[]
   @@map("referencias_recuperacao")
 }
 
@@ -467,9 +469,16 @@ model AvaliacaoRecuperacao {
   demonstracao     Boolean     @default(false)
   realizadoEm     DateTime?   @db.Timestamptz(3)
   observacao       String?     @db.VarChar(1000)
+  valorReferenciaPorKg Decimal? @db.Decimal(12, 4)
+  percentualRecuperavel Decimal? @db.Decimal(7, 4)
+  fonteReferencia String? @db.VarChar(60)
+  observacaoReferencia String? @db.VarChar(1000)
+  referenciaRecuperacaoId String? @db.Uuid
   equipamento      Equipamento @relation(fields: [equipamentoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  referenciaRecuperacao ReferenciaRecuperacao? @relation(fields: [referenciaRecuperacaoId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   @@index([equipamentoId, avaliadoEm])
   @@index([demonstracao, avaliadoEm])
+  @@index([referenciaRecuperacaoId])
   @@map("avaliacoes_recuperacao")
 }
 

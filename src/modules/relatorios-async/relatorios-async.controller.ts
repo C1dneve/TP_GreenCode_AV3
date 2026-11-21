@@ -3,7 +3,7 @@ import { RelatoriosAsyncService } from "./relatorios-async.service.js";
 export class RelatoriosAsyncController {
   constructor(private readonly service: RelatoriosAsyncService) {}
   requestInternal(body: any, actor: string, requestId: string) { return this.service.requestInternal(body, actor, requestId); }
-  requestPublic(body: any, identity: IntegrationIdentity, requestId: string) { return this.service.requestPublic(body, identity, requestId); }
+  requestPublic(body: any, identity: IntegrationIdentity, requestId: string, identificadorPublico: string) { return this.service.requestPublic(body, identity, requestId, identificadorPublico); }
   listInternal(query: any) { return this.service.listInternal(query); }
   listPublic(identity: IntegrationIdentity, query: any) { return this.service.listPublic(identity, query); }
   getInternal(id: string) { return this.service.getInternal(id); }

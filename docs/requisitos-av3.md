@@ -4,7 +4,7 @@ Este documento organiza os requisitos do enunciado, as decisões de produto apro
 
 - **[ENUNCIADO]** requisito expresso no PDF da AV3.
 - **[DECISÃO]** regra de produto aprovada para o GreenCode AV3.
-- **[PROPOSTA]** solução técnica a confirmar antes da implementação da respectiva fase.
+- **[PROPOSTA]** solução técnica sugerida, ainda não adotada no código.
 
 ## Requisitos funcionais e técnicos
 
@@ -44,20 +44,28 @@ Este documento organiza os requisitos do enunciado, as decisões de produto apro
 | TECH-01 | Justificar biblioteca estatística, persistência, retry e escalabilidade no relatório técnico | [ENUNCIADO] | `relatorio-tecnico-av3.md` atualizado com decisões efetivas |
 | COMP-01 | Compatibilidade com Windows 10+ e Ubuntu 24.04.03+ e derivados | [ENUNCIADO] | Guia reproduzível e evidências por plataforma |
 
-## Estado do primeiro grande passo
+## Estado atual do código e da validação
 
-A tabela abaixo distingue código implementado de validação executada. Uma funcionalidade não deve ser marcada como validada somente porque seus arquivos foram escritos.
-
-| Requisito | Situação no código recebido | Estado da validação |
+| Requisito | Situação no código revisado | Estado da validação |
 |---|---|---|
-| PAR-01 a PAR-05 | Implementados no primeiro incremento | Pendente de build e testes HTTP/PostgreSQL completos |
-| API-01 a API-07 | Implementados para o escopo inicial de lote e rastreabilidade | Pendente de execução da suíte completa |
-| INT-01 a INT-03 | Implementados com transação serializável, tabelas separadas e constraints | Pendente de validação de rollback e concorrência no PostgreSQL |
-| AUD-01 | Implementado para operações administrativas e externas descritas no relatório | Persistência não homologada em banco neste ambiente |
-| ANA-01 a ANA-06 | Fase analítica futura | Não implementados |
-| API-08, JOB-01 a JOB-04, REL-01/02 e OPS-01 | Fases de analytics, filas e relatórios | Não implementados |
-| TECH-01 | Relatório técnico criado | Conteúdo atualizado; decisões futuras permanecem pendentes |
-| COMP-01 | Instruções de execução para Windows e Ubuntu documentadas | Compatibilidade deve ser testada em cada ambiente |
+| ANA-01 a ANA-03 | Implementados; eficiência mede entrada do lote até conclusão e separa espera/triagem efetiva; rentabilidade explicita referências e estimativas | Testes unitários adicionados/atualizados; execução bloqueada pela instalação incompleta de dependências |
+| ANA-04 a ANA-06 | OLS com critérios de qualidade, persistência histórica e backtesting por transição auditada para INSERVIVEL | Teste unitário de backtesting adicionado; PostgreSQL ainda não homologado |
+| API-01 a API-07 | Implementados para parceiros, API Keys, escopos, submissão, rastreabilidade, rate limit e versionamento | Testes existentes; execução integrada pendente |
+| API-08 e JOB-01 a JOB-04 | Implementados com Outbox, BullMQ, Redis, status, retry, recuperação e download | Bloqueados sem Redis/PostgreSQL/Docker neste ambiente |
+| API-09 | Projeções públicas removem IDs técnicos, barcodes e nomes de operadores dos resultados/relatórios públicos | Testes unitários de projeção adicionados; integração pendente |
+| PAR-01 a PAR-05 / INT-01 a INT-03 | Implementados com transações, idempotência, escopos e vínculo parceiro-organização | Execução PostgreSQL/concorrência pendente |
+| REL-01/02 e AUD-01 | Implementados com status, autorização, checksum, expiração e auditoria | Execução integrada pendente |
+| TECH-01 | Relatório técnico atualizado com decisões e limitações | Revisão documental realizada; homologação ainda não executada |
+| COMP-01 | Guia Windows/Ubuntu documentado; porta host PostgreSQL padronizada em 5433 conforme Compose | Compatibilidade por plataforma não testada neste ambiente |
+
+## Evidências e critérios de conclusão
+
+- A validação funcional manual deve seguir o [Guia de execução e testes](guia-de-testes-professor.md).
+- A suíte unitária/HTTP deve ser executada por `npm test`.
+- A suíte PostgreSQL deve ser executada por `npm run test:integration` em banco dedicado cujo nome contenha `test`.
+- Migrations, constraints, transações, idempotência e isolamento precisam de execução real em PostgreSQL.
+- Build, geração/validação Prisma e testes devem ser registrados com o resultado efetivo do terminal.
+- Código escrito sem execução é registrado como implementado, mas não validado.
 
 ## Evidências e critérios de conclusão
 
@@ -68,6 +76,6 @@ A tabela abaixo distingue código implementado de validação executada. Uma fun
 - Build, geração/validação Prisma e testes devem ser registrados com o resultado efetivo do terminal.
 - Código escrito sem execução é registrado como implementado, mas não validado.
 
-## Limitações conhecidas na revisão documental
+## Limitações conhecidas na revisão
 
-A revisão do código recebido identificou que a operação de submissão grava `SUBMISSAO_PUBLICA_LOTE`, mas a lista de ações consultadas para compor `historicoOperacional` ainda não inclui esse evento. Até a correção e novo teste, a presença da submissão inicial no histórico público deve ser tratada como pendente. Também está registrada no relatório técnico a divergência de persistência direta via Prisma nos services novos em relação ao padrão Repository dos módulos operacionais.
+A camada analítica utiliza os eventos persistidos de triagem e auditoria. Registros AV2 síncronos sem duração real não são usados para inventar tempos; permanecem identificados separadamente. O backtesting depende de uma transição explícita auditada para `INSERVIVEL`; ausência de evento não comprova sobrevivência do equipamento e é contabilizada como observação sem evento, fora das métricas numéricas de erro. A documentação técnica também registra limites de consulta de 20.000 registros e a dívida técnica de alguns serviços novos com acesso direto ao Prisma.

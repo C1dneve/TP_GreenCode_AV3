@@ -367,7 +367,7 @@ A migration em banco limpo deve ser verificada também usando um ambiente descar
 Se não utilizar Docker, instale Node.js 24.x e PostgreSQL 17. Crie um banco dedicado para a aplicação e configure `DATABASE_URL` no `.env`, por exemplo:
 
 ```text
-DATABASE_URL=postgresql://greencode:SENHA_LOCAL@127.0.0.1:5432/greencode?schema=public
+DATABASE_URL=postgresql://greencode:SENHA_LOCAL@127.0.0.1:5433/greencode?schema=public
 ```
 
 Na raiz do projeto:

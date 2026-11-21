@@ -1,9 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ParceirosController } from "./parceiros.controller.js";
+import { INTEGRATION_SCOPES } from "../integracoes/scopes.js";
 
 const err = { $ref: "Erro#" } as const;
 const uuid = { type: "string", format: "uuid" } as const;
-const escopos = { type: "array", uniqueItems: true, items: { type: "string", enum: ["lotes:write", "rastreabilidade:read"] } } as const;
+const escopos = { type: "array", uniqueItems: true, items: { type: "string", enum: [...INTEGRATION_SCOPES] } } as const;
 const partner = {
   type: "object", additionalProperties: false,
   required: ["id", "nome", "ativo", "escopos", "limiteRequisicoesPorMinuto", "maxEquipamentosPorSubmissao", "maxPayloadBytes", "permiteLoteSemEquipamentos", "createdAt", "updatedAt"],

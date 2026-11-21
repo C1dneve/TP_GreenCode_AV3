@@ -51,10 +51,16 @@ export class UsefulLifeService {
     const equipment = await this.repo.lifeData(filters);
     const predictions: LifePrediction[] = equipment.map((item: AnalyticsLifeEquipmentRecord): LifePrediction => {
       const base = item.valorAquisicao > 0 ? item.valorAquisicao : null;
-      const points: Array<[number, number]> = item.depreciacoes.map((entry): RegressionPoint => {
-        const ageMonths = Math.max(0, (entry.avaliadoEm.getTime() - Date.UTC(item.anoFabricacao, 0, 1)) / (30.4375 * 86400000));
-        return [ageMonths, Number(entry.valorEstimado)];
-      });
+      const now = new Date();
+      const sourcePoints = item.depreciacoes
+        .filter(entry => entry.avaliadoEm <= now && Number.isFinite(Number(entry.valorEstimado)) && Number(entry.valorEstimado) >= 0)
+        .map((entry): RegressionPoint => {
+          const ageMonths = (entry.avaliadoEm.getTime() - Date.UTC(item.anoFabricacao, 0, 1)) / (30.4375 * 86400000);
+          return [ageMonths, Number(entry.valorEstimado)];
+        })
+        .filter(([age]) => age >= 0);
+      const points = sourcePoints;
+
       const regression = linearRegression(points);
       const failures = item.falhas.length;
       const maintenances = item.manutencoes.length;
@@ -62,12 +68,15 @@ export class UsefulLifeService {
       let remainingMonths: number | null = null;
       let unavailableReason: string | null = null;
       const distinctObservations = new Set<number>(points.map(([age]: RegressionPoint) => age)).size;
-      if (!base || points.length < 3 || distinctObservations < 3 || !regression) unavailableReason = "São necessárias pelo menos três avaliações de depreciação em datas distintas e valor de aquisição positivo.";
+      if (!base || points.length < 3 || distinctObservations < 3 || !regression) unavailableReason = "São necessárias pelo menos três avaliações válidas, em datas distintas, e valor de aquisição positivo.";
+      else if (item.estadoFisico === "INSERVIVEL") unavailableReason = "O equipamento já foi classificado como INSERVIVEL; não há vida útil remanescente a projetar.";
       else if (regression.slope >= 0) unavailableReason = "A série histórica não demonstra tendência de depreciação.";
+      else if (regression.rSquared < 0.35) unavailableReason = "Ajuste estatístico insuficiente (R² inferior a 0,35); projeção não disponibilizada.";
       else {
         const lastAge = points[points.length - 1]![0];
         const zeroAge = -regression.intercept / regression.slope;
-        remainingMonths = Math.max(0, zeroAge - lastAge);
+        if (!Number.isFinite(zeroAge) || zeroAge <= lastAge) unavailableReason = "O modelo indica que o limite de depreciação já teria sido atingido; não há horizonte futuro confiável.";
+        else remainingMonths = zeroAge - lastAge;
       }
       const penalty = Math.min(.5, failures * .06);
       const maintenanceCredit = Math.min(.15, maintenances * .02);
@@ -86,7 +95,7 @@ export class UsefulLifeService {
         dataEstimadaInservivel: adjustedMonths === null ? null : new Date(Date.now() + adjustedMonths * 30.4375 * 86400000).toISOString(),
         tendenciaValorPorMes: regression ? round(regression.slope, 4) : null,
         rSquared: regression ? round(regression.rSquared, 4) : null,
-        confiabilidade: regression ? round(regression.rSquared * stateScore * Math.max(.35, 1 - penalty + maintenanceCredit), 4) : null,
+        confiabilidade: regression && adjustedMonths !== null ? round(regression.rSquared * stateScore * Math.max(.35, 1 - penalty + maintenanceCredit), 4) : null,
         metodo: "Regressão linear OLS sobre valor estimado de depreciação x idade em meses, ajustada por condição física, falhas e manutenções",
         indisponivel: adjustedMonths === null,
         motivoIndisponibilidade: unavailableReason,
@@ -100,7 +109,7 @@ export class UsefulLifeService {
       vidaUtilRemanescenteMediaMeses: valid.length ? round(valid.reduce((sum: number, item: AvailableLifePrediction) => sum + item.mesesRemanescentesEstimados, 0) / valid.length, 1) : null,
       confiabilidadeMedia: valid.length ? round(valid.reduce((sum: number, item: AvailableLifePrediction) => sum + item.confiabilidade, 0) / valid.length, 4) : null,
       previsoes: predictions,
-      limitacao: "Previsões dependem de histórico real de depreciação; sem no mínimo três avaliações em datas distintas, o resultado é explicitamente indisponível.",
+      limitacao: "Previsões dependem de avaliações válidas e não futuras. Exige no mínimo três observações em datas distintas, tendência negativa e R² mínimo de 0,35; equipamento já INSERVIVEL ou projeção cujo limite tenha sido ultrapassado não recebe previsão futura. O resultado é estimativo, não uma garantia de falha.",
     };
     await this.repo.saveRun({
       tipo: "VIDA_UTIL_REMANESCENTE",

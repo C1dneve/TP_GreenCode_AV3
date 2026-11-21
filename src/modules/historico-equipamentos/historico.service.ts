@@ -32,7 +32,19 @@ export class HistoricoEquipamentosService {
     const estimate = ProfitabilityService.estimate({ tipo: equipment.tipo, marca: equipment.marca, modelo: equipment.modelo, estadoFisico: equipment.estadoFisico, pesoQuilogramas: Number(equipment.pesoQuilogramas) }, references);
     const ref = references.find((item: any) => item.id === estimate.referenciaId) ?? null;
     const value = estimate.valorEstimado;
-    return this.db.$transaction(async (tx: any) => { const evaluation = await tx.avaliacaoRecuperacao.create({ data: { equipamentoId: id, valorEstimado: value.toFixed(2), metodo: ref ? "Referência por tipo, estado, marca e modelo com fallback hierárquico" : "Tabela-base conservadora por tipo e estado", quantidadeKg: equipment.pesoQuilogramas, demonstracao: equipment.demonstracao, observacao: input.observacao?.trim() || null } }); await tx.eventoAuditoria.create({ data: { atorUsuarioId: actorId, atorTipo: "USUARIO", organizacaoId: equipment.lote?.organizacaoId, acao: "AVALIACAO_RECUPERACAO", entidade: "AvaliacaoRecuperacao", entidadeId: evaluation.id, resultado: "SUCESSO", requestId, detalhes: { equipamentoId: id, valorEstimado: value, referenciaId: ref?.id ?? null } } }); return { ...evaluation, valorEstimado: value, valorReferenciaPorKg: estimate.valorReferenciaPorKg, percentualRecuperavel: estimate.percentualRecuperavel, fonte: estimate.fonte }; });
+    return this.db.$transaction(async (tx: any) => { const evaluation = await tx.avaliacaoRecuperacao.create({ data: {
+        equipamentoId: id,
+        valorEstimado: value.toFixed(2),
+        metodo: ref ? "Referência por tipo, estado, marca e modelo com fallback hierárquico" : "Tabela-base conservadora por tipo e estado",
+        quantidadeKg: equipment.pesoQuilogramas,
+        demonstracao: equipment.demonstracao,
+        observacao: input.observacao?.trim() || null,
+        valorReferenciaPorKg: estimate.valorReferenciaPorKg.toFixed(4),
+        percentualRecuperavel: estimate.percentualRecuperavel.toFixed(4),
+        fonteReferencia: estimate.fonte,
+        observacaoReferencia: estimate.observacaoReferencia,
+        referenciaRecuperacaoId: ref?.id ?? null,
+      } }); await tx.eventoAuditoria.create({ data: { atorUsuarioId: actorId, atorTipo: "USUARIO", organizacaoId: equipment.lote?.organizacaoId, acao: "AVALIACAO_RECUPERACAO", entidade: "AvaliacaoRecuperacao", entidadeId: evaluation.id, resultado: "SUCESSO", requestId, detalhes: { equipamentoId: id, valorEstimado: value, referenciaId: ref?.id ?? null } } }); return { ...evaluation, valorEstimado: value, valorReferenciaPorKg: estimate.valorReferenciaPorKg, percentualRecuperavel: estimate.percentualRecuperavel, fonte: estimate.fonte }; });
   }
   async recordRealization(equipmentId: string, evaluationId: string, value: number, actorId: string, requestId: string) {
     if (!Number.isFinite(value) || value < 0) throw errors.badRequest("VALIDATION_ERROR", "Valor realizado deve ser não negativo.");

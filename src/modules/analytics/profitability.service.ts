@@ -25,28 +25,67 @@ export class ProfitabilityService {
     const pricePerKg = reference ? Number(reference.valorMaterialPorKg) : FALLBACK_RATE[input.tipo] ?? 0;
     const recoveryPercent = reference ? Number(reference.percentualRecuperavel) : (CONDITION_FACTOR[input.estadoFisico] ?? 0) * 100;
     const value = Math.max(0, input.pesoQuilogramas) * Math.max(0, pricePerKg) * Math.min(100, Math.max(0, recoveryPercent)) / 100;
-    return { valorEstimado: round(value), valorReferenciaPorKg: pricePerKg, percentualRecuperavel: recoveryPercent, fonte: reference ? "REFERENCIA_CADASTRADA" : "TABELA_BASE_ESTIMATIVA", referenciaId: reference?.id ?? null };
+    return {
+      valorEstimado: round(value),
+      valorReferenciaPorKg: pricePerKg,
+      percentualRecuperavel: recoveryPercent,
+      pesoConsideradoKg: round(Math.max(0, input.pesoQuilogramas), 3),
+      materialRecuperavelKg: round(Math.max(0, input.pesoQuilogramas) * Math.min(100, Math.max(0, recoveryPercent)) / 100, 3),
+      fonte: reference ? "REFERENCIA_CADASTRADA" : "TABELA_BASE_ESTIMATIVA",
+      referenciaId: reference?.id ?? null,
+      origemReferencia: reference ? "Cadastro interno de referência vigente" : "Tabela-base estimativa conservadora",
+      observacaoReferencia: reference?.observacaoMetodologia ?? null,
+    };
   }
   async execute(filters: AnalyticsFilters = {}) {
     const [equipments, references] = await Promise.all([this.repo.equipment(filters), this.repo.recoveryReferences(Boolean(filters.incluirDemonstracao))]);
     const rows = equipments.map((equipment: any) => {
       const estimation = ProfitabilityService.estimate({ tipo: equipment.tipo, marca: equipment.marca, modelo: equipment.modelo, estadoFisico: equipment.estadoFisico, pesoQuilogramas: Number(equipment.pesoQuilogramas), demonstracao: Boolean(equipment.demonstracao) }, references);
       const latest = (equipment.avaliacoesRecuperacao ?? []).find((item: any) => Boolean(item.demonstracao) === Boolean(equipment.demonstracao));
-      return { tipo: equipment.tipo, marca: equipment.marca, modelo: equipment.modelo, estadoFisico: equipment.estadoFisico, pesoQuilogramas: Number(equipment.pesoQuilogramas), valorEstimado: latest ? Number(latest.valorEstimado) : estimation.valorEstimado, valorRealizado: latest?.valorRealizado == null ? null : Number(latest.valorRealizado), fonteEstimativa: latest ? latest.metodo : estimation.fonte, equipamentoId: equipment.id };
+      return {
+        equipamentoId: equipment.id,
+        tipo: equipment.tipo, marca: equipment.marca, modelo: equipment.modelo, estadoFisico: equipment.estadoFisico,
+        pesoQuilogramas: Number(equipment.pesoQuilogramas),
+        pesoMaterialRecuperavelKg: latest
+          ? latest.percentualRecuperavel == null ? null : round(Number(latest.quantidadeKg) * Number(latest.percentualRecuperavel) / 100, 3)
+          : estimation.materialRecuperavelKg,
+        precoReferenciaPorKg: latest ? (latest.valorReferenciaPorKg == null ? null : Number(latest.valorReferenciaPorKg)) : estimation.valorReferenciaPorKg,
+        percentualRecuperavel: latest ? (latest.percentualRecuperavel == null ? null : Number(latest.percentualRecuperavel)) : estimation.percentualRecuperavel,
+        valorEstimado: latest ? Number(latest.valorEstimado) : estimation.valorEstimado,
+        valorRealizado: latest?.valorRealizado == null ? null : Number(latest.valorRealizado),
+        fonteEstimativa: latest ? (latest.fonteReferencia ?? latest.metodo) : estimation.fonte,
+        origemReferencia: latest ? (latest.fonteReferencia ?? "AVALIACAO_HISTORICA_SEM_SNAPSHOT") : estimation.origemReferencia,
+        observacaoReferencia: latest ? (latest.observacaoReferencia ?? "Avaliação histórica sem snapshot de preço/percentual; origem original não disponível.") : estimation.observacaoReferencia,
+        referenciaRecuperacaoId: latest ? latest.referenciaRecuperacaoId : estimation.referenciaId,
+      };
     });
     const realized = rows.filter((x: any) => x.valorRealizado !== null);
     const grouped = (key: string) => {
       const groups = new Map<string, any[]>();
       for (const row of rows as any[]) { const group = String(row[key]); const list = groups.get(group) ?? []; list.push(row); groups.set(group, list); }
-      return [...groups].map(([nome, values]) => ({ nome, equipamentos: values.length, estimadoMedio: round(average(values.map(x => x.valorEstimado))!), realizadoMedio: average(values.filter(x => x.valorRealizado !== null).map(x => x.valorRealizado)) === null ? null : round(average(values.filter(x => x.valorRealizado !== null).map(x => x.valorRealizado))!) }));
+      return [...groups].map(([nome, values]) => {
+        const estimated = values.map(x => x.valorEstimado);
+        const actual = values.filter(x => x.valorRealizado !== null).map(x => x.valorRealizado as number);
+        return {
+          nome, equipamentos: values.length,
+          estimadoMedio: average(estimated) === null ? null : round(average(estimated)!),
+          estimadoMinimo: estimated.length ? round(Math.min(...estimated)) : null,
+          estimadoMaximo: estimated.length ? round(Math.max(...estimated)) : null,
+          realizadoMedio: average(actual) === null ? null : round(average(actual)!),
+          realizacoes: actual.length,
+        };
+      });
     };
     const result = {
       equipamentosAvaliados: rows.length, avaliacoesComRealizacao: realized.length,
+      valorEstimadoMedioPorEquipamento: rows.length ? round(average(rows.map((x: any) => x.valorEstimado))!) : null,
+      valorRealizadoMedioPorEquipamento: realized.length ? round(average(realized.map((x: any) => x.valorRealizado as number))!) : null,
       valorEstimadoTotal: round(rows.reduce((sum: number, x: any) => sum + x.valorEstimado, 0)),
       valorRealizadoTotal: round(realized.reduce((sum: number, x: any) => sum + (x.valorRealizado as number), 0)),
       desvioRealizadoVsEstimado: realized.length ? round(realized.reduce((sum: number, x: any) => sum + ((x.valorRealizado as number) - x.valorEstimado), 0)) : null,
       porTipo: grouped("tipo"), porMarca: grouped("marca"), porModelo: grouped("modelo"), porEstadoFisico: grouped("estadoFisico"),
       relacaoPesoValor: rows.map((x: any) => ({ pesoQuilogramas: x.pesoQuilogramas, valorEstimado: x.valorEstimado, valorRealizado: x.valorRealizado })),
+      detalhesEquipamentos: rows,
       observacao: "Valores estimados usam referência da mesma origem do equipamento (real ou demonstrativa), priorizando modelo, marca e referência genérica, ou tabela-base conservadora. A avaliação realizada também deve ter a mesma origem. Realização só é apresentada quando registrada; valores estimados não são resultados financeiros reais.",
     };
     await this.repo.saveRun({ tipo: "RENTABILIDADE_EQUIPAMENTOS", organizacaoId: filters.organizacaoId ?? null, metodo: "Peso x valor por kg x percentual recuperável", versaoModelo: "1.0.0", filtros: filters as any, resultado: result as any, observacoes: rows.length, indisponivel: rows.length === 0, motivo: rows.length ? null : "Nenhum equipamento elegível foi encontrado.", demonstracao: Boolean(filters.incluirDemonstracao), origemExecucao: filters.origemExecucao ?? "MANUAL", schedulerId: filters.schedulerId ?? null, jobId: filters.jobId ?? null, chaveExecucao: filters.schedulerId && filters.jobId ? `${filters.schedulerId}:${filters.jobId}` : null });

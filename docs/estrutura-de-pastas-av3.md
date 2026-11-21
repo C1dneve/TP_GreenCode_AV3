@@ -25,6 +25,11 @@ Este documento explica onde ficam o código, as migrations, os testes e a docume
 | `src/modules/parceiros/` | CRUD administrativo de parceiros, associações e ciclo de vida das chaves |
 | `src/modules/integracoes/` | Geração/verificação de API Key, escopos, hash canônico e rate limiting |
 | `src/modules/api-publica/` | Autenticação externa, submissão e consulta de rastreabilidade |
+| `src/modules/analytics/` | Serviços analíticos, persistência histórica, OLS e backtesting |
+| `src/modules/triagem/` | Sessões, ocorrências e conclusão de triagem |
+| `src/modules/historico-equipamentos/` | Falhas, manutenção, depreciação e recuperação |
+| `src/modules/relatorios-async/` | Solicitação, status, sanitização, geração e download de relatórios |
+| `src/infrastructure/queue/` | Redis, BullMQ, Outbox e agendamento recorrente |
 | `src/modules/auditoria/` | Registro e consulta de auditoria existente ampliada |
 | `src/modules/relatorios/` | Relatórios operacionais/financeiros disponíveis na base atual |
 | `src/modules/parametros/` | Parâmetros globais |
@@ -48,6 +53,6 @@ src/modules/
 
 A autenticação JWT interna permanece separada da API Key pública. O ciclo administrativo das chaves fica no módulo `parceiros`, evitando duplicar a gestão do parceiro. Os serviços novos ainda possuem acessos diretos a Prisma em pontos documentados no [relatório técnico](relatorio-tecnico-av3.md); a arquitetura operacional existente utiliza Repository.
 
-## Fases futuras
+## Estado atual e pendências
 
-As pastas de analytics, jobs, filas, workers e armazenamento de artefatos não são criadas antecipadamente sem casos de uso implementados. Essas funcionalidades serão acrescentadas quando os próximos incrementos forem aprovados.
+As pastas de analytics, triagem, histórico de equipamentos, relatórios assíncronos e infraestrutura de filas já fazem parte da implementação AV3. A execução integrada dessas funcionalidades depende da homologação em Node 24, PostgreSQL e Redis. A presença dos módulos no repositório não equivale a testes de infraestrutura aprovados.
