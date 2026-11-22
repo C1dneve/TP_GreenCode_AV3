@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient } from "../../generated/prisma/client.ts";
 import { ParametrosController } from "./parametros.controller.js";
 import { ParametrosRepository } from "./parametros.repository.js";
 import { ParametrosService } from "./parametros.service.js";

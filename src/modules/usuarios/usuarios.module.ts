@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient } from "../../generated/prisma/client.ts";
 import { UsuariosController } from "./usuarios.controller.js";
 import { UsuariosRepository } from "./usuarios.repository.js";
 import { UsuariosService } from "./usuarios.service.js";

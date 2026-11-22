@@ -1,7 +1,7 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
-import type { PrismaClient, PapelUsuario } from "../generated/prisma/client.js";
+import type { PrismaClient, PapelUsuario } from "../generated/prisma/client.ts";
 import { buildApp } from "../app.js";
 
 const secret = "test-only-jwt-secret-that-is-long-enough-123456";

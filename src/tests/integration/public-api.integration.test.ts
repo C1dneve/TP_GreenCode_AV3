@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { randomInt, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient } from "../../generated/prisma/client.ts";
 import { buildApp } from "../../app.js";
 import { createPrismaClient } from "../../infrastructure/database/prisma.js";
 import { hashApiSecret } from "../../modules/integracoes/api-key-security.js";
@@ -384,7 +384,11 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
   lotIds.push(equipmentLotId);
   await prisma.equipamento.updateMany({ where: { loteId: equipmentLotId }, data: { statusRastreamento: "EM_TRIAGEM" } });
   const blockedCancel = await app.inject({ method: "DELETE", url: `/api/v1/public/lotes/${equipmentPublicId}`, headers: publicHeaders(writeKey.secret), payload: { versaoEsperada: 1 } });
-  assert.equal(blockedCancel.statusCode, 409, blockedCancel.body, "Lote com equipamento que iniciou triagem não pode ser cancelado.");
+  assert.equal(
+    blockedCancel.statusCode,
+    409,
+    `Lote com equipamento que iniciou triagem não pode ser cancelado. Resposta: ${blockedCancel.body}`,
+  );
 
   const cancellable = await app.inject({
     method: "POST", url: "/api/v1/public/lotes", headers: publicHeaders(writeKey.secret, associationA.identificadorPublico, `cancel-${suffix}`),
@@ -436,7 +440,11 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
   assert.doesNotMatch(readByExternal.body, /codigoBarrasInterno|segredoHash|parceiroId|organizacaoId|atorNomeSnapshot/);
 
   const readByPublicId = await app.inject({ method: "GET", url: `/api/v1/public/rastreabilidade/lotes/${internalPublicId}`, headers: publicHeaders(readKey.secret) });
-  assert.equal(readByPublicId.statusCode, 404, readByPublicId.body, "Um parceiro não consulta lotes internos que não submeteu, mesmo com vínculo à organização.");
+  assert.equal(
+    readByPublicId.statusCode,
+    404,
+    `Um parceiro não consulta lotes internos que não submeteu, mesmo com vínculo à organização. Resposta: ${readByPublicId.body}`,
+  );
 
   const revokedKey = await app.inject({ method: "POST", url: `/api/v1/parceiros/${partnerA.id}/chaves/${readKey.id}/revogacao`, headers: adminHeaders(token) });
   assert.equal(revokedKey.statusCode, 200, revokedKey.body);

@@ -12,8 +12,16 @@
     "skipLibCheck": true,
     "noEmitOnError": true,
     "sourceMap": true,
-    "declaration": true
+    "declaration": true,
+    "rewriteRelativeImportExtensions": true
   },
-  "include": ["src/**/*.ts", "prisma/**/*.ts"],
-  "exclude": ["node_modules", "dist", "src/generated/prisma"]
+  "include": [
+    "src/**/*.ts",
+    "prisma/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/generated/prisma"
+  ]
 }

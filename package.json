@@ -9,14 +9,14 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "prisma generate && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "build": "npm run prisma:generate && npm run build:ts",
     "start": "node dist/src/server.js",
     "test": "npm run test:unit",
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:seed": "prisma db seed",
+    "db:seed": "npm run prisma:generate && prisma db seed",
     "db:studio": "prisma studio",
     "test:integration": "npm run build && node --test --test-concurrency=1 --test-reporter=spec dist/src/tests/integration/*.integration.test.js",
     "dev:worker": "tsx watch src/worker.ts",
@@ -24,7 +24,12 @@
     "start:worker": "node dist/src/worker.js",
     "test:unit": "npm run build && node --test --test-reporter=spec dist/src/tests/*.test.js",
     "test:demonstracao": "npm run build && node dist/src/tests/demonstracao.js",
-    "test:av3": "npm run prisma:validate && npm run build && node --test --test-reporter=spec dist/src/tests/*.test.js && node dist/src/tests/demonstracao.js && node --test --test-concurrency=1 --test-reporter=spec dist/src/tests/integration/*.integration.test.js"
+    "test:av3": "npm run prisma:validate && npm run build && node --test --test-reporter=spec dist/src/tests/*.test.js && node dist/src/tests/demonstracao.js && node --test --test-concurrency=1 --test-reporter=spec dist/src/tests/integration/*.integration.test.js",
+    "build:ts": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "db:seed:generated": "prisma db seed",
+    "test:unit:dist": "node --test --test-reporter=spec dist/src/tests/*.test.js",
+    "test:demonstracao:dist": "node dist/src/tests/demonstracao.js",
+    "test:integration:dist": "node --test --test-concurrency=1 --test-reporter=spec dist/src/tests/integration/*.integration.test.js"
   },
   "dependencies": {
     "@fastify/jwt": "^10.2.5",

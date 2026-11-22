@@ -1,4 +1,4 @@
-import type { PapelUsuario } from "../../generated/prisma/client.js";
+import type { PapelUsuario } from "../../generated/prisma/client.ts";
 import { UsuariosService } from "./usuarios.service.js";
 export class UsuariosController {
   constructor(private readonly service: UsuariosService) {}

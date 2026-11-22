@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient } from "../../generated/prisma/client.ts";
 import { errors } from "../../shared/domain-error.js";
 import { parseApiKey, verifyApiSecret } from "../integracoes/api-key-security.js";
 import { effectiveScopes } from "../integracoes/scopes.js";

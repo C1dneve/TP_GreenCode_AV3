@@ -126,7 +126,7 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Configure BOOTSTRAP_ADMIN_PASSWORD no arquivo .env}
       REDIS_URL: redis://redis-test:6379
       REPORTS_DIR: /app/storage/reports
-    command: ["sh", "-c", "npm run db:deploy && npm run db:seed && npm run test:integration"]
+    command: ["sh", "-c", "npm run db:deploy && npm run db:seed:generated && npm run test:integration:dist"]
 
 volumes:
   greencode_pgdata:

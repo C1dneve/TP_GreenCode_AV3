@@ -1,4 +1,4 @@
-import type { Prisma } from "../../generated/prisma/client.js";
+import type { Prisma } from "../../generated/prisma/client.ts";
 import { errors } from "../../shared/domain-error.js";
 import { assertRole } from "../../shared/authorization.js";
 import { requireExpectedVersion } from "../../shared/version.js";

@@ -1,4 +1,4 @@
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient } from "../../generated/prisma/client.ts";
 import { errors } from "../../shared/domain-error.js";
 
 export interface AnalyticsFilters { organizacaoId?: string; de?: Date; ate?: Date; incluirDemonstracao?: boolean; origemExecucao?: "MANUAL" | "AGENDADA"; schedulerId?: string; jobId?: string }

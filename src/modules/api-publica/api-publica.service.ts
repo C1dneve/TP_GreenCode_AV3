@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
+import type { Prisma, PrismaClient } from "../../generated/prisma/client.ts";
 import { DomainError, errors, isPrismaCode } from "../../shared/domain-error.js";
 import { normalizeEquipmentCreateInput, generateInternalBarcode, type EquipmentCreateInput } from "../equipamentos/equipamento-domain.js";
 import { normalizeLoteCreateInput, type LoteCreateInput } from "../lotes/lote-domain.js";

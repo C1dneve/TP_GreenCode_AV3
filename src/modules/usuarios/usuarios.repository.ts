@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient, PapelUsuario } from "../../generated/prisma/client.js";
+import type { Prisma, PrismaClient, PapelUsuario } from "../../generated/prisma/client.ts";
 import { AuditoriaRepository } from "../auditoria/auditoria.repository.js";
 import type { EventoAuditoriaInput } from "../auditoria/auditoria.repository.js";
 type Db = PrismaClient | Prisma.TransactionClient;

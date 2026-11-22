@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
-import type { PapelUsuario } from "../../generated/prisma/client.js";
+import type { PapelUsuario } from "../../generated/prisma/client.ts";
 import { errors, isPrismaCode } from "../../shared/domain-error.js";
 import { AuthRepository } from "./auth.repository.js";
 import { requireExpectedVersion } from "../../shared/version.js";

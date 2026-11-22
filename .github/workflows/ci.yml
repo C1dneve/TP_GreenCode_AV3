@@ -8,7 +8,9 @@ on:
 
 jobs:
   test:
+    name: Tests (Node.js 24, PostgreSQL 17 e Redis 7)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:17-alpine
@@ -41,28 +43,141 @@ jobs:
       REPORTS_DIR: ./storage/reports
       JWT_SECRET: ci-only-secret-with-more-than-32-characters
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js 24
+        id: setup_node
+        uses: actions/setup-node@v7
         with:
           node-version: 24
-      - run: npm ci
-      - run: npm run prisma:validate
-      - run: npm run db:deploy
-      - run: npm run db:seed
-      - run: npm run build
+          cache: npm
+
+      - name: Install dependencies
+        id: install
+        run: npm ci
+
+      - name: Validate Prisma schema
+        id: prisma_validate
+        if: always() && steps.install.outcome == 'success'
+        run: npm run prisma:validate
+
+      - name: Generate Prisma Client
+        id: prisma_generate
+        if: always() && steps.install.outcome == 'success' && steps.prisma_validate.outcome == 'success'
+        run: npm run prisma:generate
+
+      - name: Apply PostgreSQL migrations
+        id: db_deploy
+        if: always() && steps.prisma_generate.outcome == 'success'
+        run: npm run db:deploy
+
+      # Prisma Client is already generated above. This avoids generating it a second time.
+      - name: Seed isolated test database
+        id: db_seed
+        if: always() && steps.db_deploy.outcome == 'success'
+        run: npm run db:seed:generated
+
+      # Compilation is independent of the database seed, so it still runs when seed fails.
+      - name: Build TypeScript
+        id: build
+        if: always() && steps.prisma_generate.outcome == 'success'
+        run: npm run build:ts
+
       - name: Unit tests
-        run: node --test --test-reporter=spec dist/src/tests/*.test.js
+        id: unit_tests
+        if: always() && steps.build.outcome == 'success'
+        run: npm run test:unit:dist
+
+      # Demonstration tests use deterministic doubles and need only the successful build.
       - name: Demonstrative scenarios and report
-        run: node dist/src/tests/demonstracao.js
+        id: demonstration
+        if: always() && steps.build.outcome == 'success'
+        run: npm run test:demonstracao:dist
+
+      # These tests connect to the actual PostgreSQL 17 and Redis 7 services above.
       - name: Integration tests with PostgreSQL 17 and Redis 7
-        run: node --test --test-concurrency=1 --test-reporter=spec dist/src/tests/integration/*.integration.test.js
-      - name: Upload demonstrative evidence
+        id: integration_tests
+        if: always() && steps.build.outcome == 'success' && steps.db_deploy.outcome == 'success'
+        run: npm run test:integration:dist
+
+      # The checked-in base report remains available even when build/demo cannot run.
+      # If the demonstration process ended before writing this CI attempt, append an explicit status.
+      - name: Record unavailable demonstration result when necessary
+        id: evidence_fallback
         if: always()
-        uses: actions/upload-artifact@v4
+        shell: bash
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          PRISMA_VALIDATE_OUTCOME: ${{ steps.prisma_validate.outcome }}
+          PRISMA_GENERATE_OUTCOME: ${{ steps.prisma_generate.outcome }}
+          DB_DEPLOY_OUTCOME: ${{ steps.db_deploy.outcome }}
+          DB_SEED_OUTCOME: ${{ steps.db_seed.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          UNIT_OUTCOME: ${{ steps.unit_tests.outcome }}
+          DEMO_OUTCOME: ${{ steps.demonstration.outcome }}
+          INTEGRATION_OUTCOME: ${{ steps.integration_tests.outcome }}
+        run: |
+          set -euo pipefail
+          report="docs/evidencias-testes-av3.md"
+          mkdir -p docs
+          if [ ! -s "$report" ]; then
+            cat > "$report" <<'REPORT_EOF'
+          # Evidências de testes — GreenCode AV3
+
+          Este arquivo é preservado entre execuções e recebe novos registros ao final.
+          REPORT_EOF
+          fi
+
+          summary_marker="## Resumo da validação CI ${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
+          if ! grep -Fq "$summary_marker" "$report"; then
+            {
+              echo
+              echo "---"
+              echo
+              echo "$summary_marker"
+              echo
+              echo "- Data UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+              echo "- Commit: ${GITHUB_SHA:-não disponível}"
+              echo "- Node.js: $(node --version 2>/dev/null || echo 'não instalado')"
+              echo "- npm ci: ${INSTALL_OUTCOME:-não executado}"
+              echo "- Prisma validate: ${PRISMA_VALIDATE_OUTCOME:-não executado}"
+              echo "- Prisma generate: ${PRISMA_GENERATE_OUTCOME:-não executado}"
+              echo "- Migrations PostgreSQL: ${DB_DEPLOY_OUTCOME:-não executado}"
+              echo "- Seed: ${DB_SEED_OUTCOME:-não executado}"
+              echo "- Build TypeScript: ${BUILD_OUTCOME:-não executado}"
+              echo "- Testes unitários: ${UNIT_OUTCOME:-não executado}"
+              echo "- Demonstração: ${DEMO_OUTCOME:-não executado}"
+              echo "- Integração PostgreSQL/Redis: ${INTEGRATION_OUTCOME:-não executado}"
+              echo
+              echo "Os valores acima são os resultados de conclusão dos passos do GitHub Actions: success, failure ou skipped. skipped indica que a etapa não foi executada, conforme suas dependências."
+            } >> "$report"
+          fi
+
+          run_marker="Execução GitHub Actions: ${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
+          if ! grep -Fq "$run_marker" "$report"; then
+            {
+              echo
+              echo "### Demonstração não registrada nesta execução"
+              echo
+              if [ "$BUILD_OUTCOME" != "success" ]; then
+                echo "- Demonstração: **NÃO EXECUTADA**; o build não foi concluído com sucesso."
+              else
+                echo "- Demonstração: **INTERROMPIDA/SEM RELATÓRIO**; o processo não registrou a execução antes de terminar."
+              fi
+              echo "- Resultado: não há evidência suficiente para classificar cenários demonstrativos como aprovados."
+            } >> "$report"
+          fi
+
+      - name: Upload test evidence
+        id: upload_evidence
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          name: greencode-av3-evidencias-demonstracao
+          name: greencode-av3-evidencias-${{ github.run_id }}-${{ github.run_attempt }}
           path: docs/evidencias-testes-av3.md
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
 
   docker-compose-smoke:
@@ -73,8 +188,12 @@ jobs:
       # A unique Compose project owns only volumes created for this CI run.
       COMPOSE_PROJECT_NAME: greencode-smoke-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v7
+
       - name: Build and verify API + PostgreSQL with Docker Compose
+        id: compose_smoke
         shell: bash
         run: |
           set -Eeuo pipefail

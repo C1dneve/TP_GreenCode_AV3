@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient } from "../../generated/prisma/client.ts";
 import { TriagemRepository } from "./triagem.repository.js";
 import { TriagemService } from "./triagem.service.js";
 import { registerTriagemRoutes } from "./routes.js";

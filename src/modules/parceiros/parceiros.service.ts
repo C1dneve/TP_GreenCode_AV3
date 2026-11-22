@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
+import type { Prisma, PrismaClient } from "../../generated/prisma/client.ts";
 import { errors } from "../../shared/domain-error.js";
 import { pageMeta } from "../../shared/pagination.js";
 import { generateApiKey } from "../integracoes/api-key-security.js";

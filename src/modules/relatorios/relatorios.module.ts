@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient } from "../../generated/prisma/client.ts";
 import { RelatoriosController } from "./relatorios.controller.js";
 import { RelatoriosRepository } from "./relatorios.repository.js";
 import { RelatoriosService } from "./relatorios.service.js";

@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from "../../generated/prisma/client.js";
+import type { Prisma, PrismaClient } from "../../generated/prisma/client.ts";
 import { AuditoriaRepository } from "../auditoria/auditoria.repository.js";
 import type { EventoAuditoriaInput } from "../auditoria/auditoria.repository.js";
 

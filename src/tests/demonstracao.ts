@@ -666,6 +666,7 @@ async function main() {
     "# Evidências da demonstração automatizada — GreenCode AV3", "",
     `- Executado em: ${startedAt}`, `- Commit: ${readCommitHash()}`, `- Runtime: ${process.version}`, `- Plataforma: ${process.platform}/${process.arch}`,
     `- Tipo de execução: teste demonstrativo (Fastify com doubles e serviços de domínio)`,
+    `- Execução GitHub Actions: ${process.env.GITHUB_RUN_ID ? `${process.env.GITHUB_RUN_ID}/${process.env.GITHUB_RUN_ATTEMPT ?? "1"}` : "execução local"}`,
     `- Cenários: ${evidence.length}`, `- Aprovados: ${passed}`, `- Reprovados: ${failed}`, `- Bloqueados: ${blocked}`, `- Não executados neste modo: ${notExecuted}`, "",
     "> Esta demonstração registra valores retornados nesta execução. Cenários que usam mocks estão identificados; não equivalem a integração com PostgreSQL/Redis.", "",
     ...evidence.flatMap((item, index) => [
@@ -691,11 +692,11 @@ async function main() {
   } catch {
     // O relatório histórico pode ainda não existir em uma instalação nova.
   }
-  const markerIndex = historicalContent.indexOf(generatedSectionMarker);
-  const preservedHistory = markerIndex >= 0
-    ? historicalContent.slice(0, markerIndex).trimEnd()
-    : historicalContent.trimEnd();
-  await writeFile(reportPath, `${preservedHistory}\n\n${generatedSectionMarker}\n\n${markdown}\n`, "utf8");
+  const preservedHistory = historicalContent.trimEnd();
+  const reportWithMarker = preservedHistory.includes(generatedSectionMarker)
+    ? preservedHistory
+    : `${preservedHistory}\n\n${generatedSectionMarker}`;
+  await writeFile(reportPath, `${reportWithMarker}\n\n---\n\n${markdown}\n`, "utf8");
 
   console.log("\n========== GREENCODE AV3 · TESTES DEMONSTRATIVOS ==========");
   console.log(`Início: ${startedAt} | Node: ${process.version} | Plataforma: ${process.platform}/${process.arch} | Commit: ${readCommitHash()}`);

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient } from "../../generated/prisma/client.ts";
 import { LotesController } from "./lotes.controller.js";
 import { LotesRepository } from "./lotes.repository.js";
 import { LotesService } from "./lotes.service.js";

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient } from "../../generated/prisma/client.ts";
 import { createApiKeyAuthenticator } from "../api-publica/integration-auth.js";
 import { PrismaRateLimiter } from "../integracoes/rate-limiter.js";
 import { AnalyticsController } from "./analytics.controller.js";

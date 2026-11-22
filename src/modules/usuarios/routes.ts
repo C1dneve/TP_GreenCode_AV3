@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { PapelUsuario } from "../../generated/prisma/client.js";
+import type { PapelUsuario } from "../../generated/prisma/client.ts";
 import type { UsuariosController } from "./usuarios.controller.js";
 const roles = ["ADMINISTRADOR", "OPERADOR_CADASTRO", "GESTOR_ALMOXARIFADO", "AUDITOR"] as const;
 const uuid = { type: "string", format: "uuid" } as const;

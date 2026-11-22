@@ -1,7 +1,8 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient, type EstadoFisico, type StatusProcessamentoLote, type StatusRastreamento, type TipoEquipamento } from "../src/generated/prisma/client.js";
+// O seed roda pelo tsx e importa diretamente o cliente TypeScript gerado.
+import { PrismaClient, type EstadoFisico, type StatusProcessamentoLote, type StatusRastreamento, type TipoEquipamento } from "../src/generated/prisma/client.ts";
 import { getBootstrapAdminConfig } from "../src/config/bootstrap-admin.js";
 
 type SeedTransaction = Pick<PrismaClient, "organizacao" | "contrato" | "lote" | "equipamento" | "parametroGlobal" | "usuario" | "historicoTriagem" | "falhaEquipamento" | "manutencaoEquipamento" | "historicoDepreciacao" | "referenciaRecuperacao" | "avaliacaoRecuperacao">;

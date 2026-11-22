@@ -49,8 +49,10 @@ npm ci
 npm run prisma:validate
 npm run prisma:generate
 npm run db:deploy
-npm run db:seed
+npm run db:seed:generated
 ```
+
+Como o Prisma Client já foi gerado na etapa anterior, essa sequência usa `db:seed:generated` para não repetir a geração. Quando precisar executar o seed isoladamente, use `npm run db:seed`; esse comando gera o cliente antes de chamar `prisma db seed`.
 
 Em terminais separados:
 

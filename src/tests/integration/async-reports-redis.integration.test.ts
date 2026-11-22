@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Queue, Worker } from "bullmq";
 import type { FastifyInstance } from "fastify";
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient } from "../../generated/prisma/client.ts";
 import { createPrismaClient } from "../../infrastructure/database/prisma.js";
 import { generateApiKey } from "../../modules/integracoes/api-key-security.js";
 import { createRedisConnection, createReportQueue, dispatchReportOutbox, REPORT_JOB_DEFAULT_OPTIONS, REPORT_QUEUE_NAME } from "../../infrastructure/queue/report-queue.js";
@@ -97,7 +97,7 @@ before(async () => {
   await prisma.parceiroOrganizacao.create({ data: {
     id: associationId,
     parceiroId: partnerId,
-    organizacaoId,
+    organizacaoId: organizationId,
     identificadorPublico: associationPublicId,
   } });
   const apiKey = await prisma.apiKey.create({ data: {

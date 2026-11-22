@@ -1,4 +1,4 @@
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient } from "../../generated/prisma/client.ts";
 export class RelatoriosRepository {
   constructor(private readonly prisma: PrismaClient) {}
   lotes(filter: { organizacaoId?: string; de?: Date; ate?: Date; status?: string }) {

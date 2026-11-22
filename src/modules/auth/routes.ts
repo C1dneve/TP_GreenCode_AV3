@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { PapelUsuario } from "../../generated/prisma/client.js";
+import type { PapelUsuario } from "../../generated/prisma/client.ts";
 import { DomainError } from "../../shared/domain-error.js";
 import type { AuthController } from "./auth.controller.js";
 import type { AuthService, JwtIdentity } from "./auth.service.js";

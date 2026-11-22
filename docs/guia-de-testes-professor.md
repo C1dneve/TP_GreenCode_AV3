@@ -340,7 +340,7 @@ docker compose --profile tests up -d postgres-test redis-test
 docker compose --profile tests run --rm test-runner
 ```
 
-O serviço `test-runner` aplica migrations e seed no banco `greencode_test` e executa `npm run test:integration`. Para rodar apenas integração a partir de um ambiente já preparado, use `npm run test:integration`.
+O serviço `test-runner` aplica migrations e seed no banco `greencode_test` usando o cliente gerado na imagem e executa `npm run test:integration:dist`. Para rodar apenas integração a partir de um ambiente já preparado, use `npm run test:integration`; esse comando gera o cliente, compila o projeto e inicia os testes.
 
 ### Pipeline completo local
 

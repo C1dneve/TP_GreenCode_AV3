@@ -40,7 +40,7 @@ export class InMemoryRateLimiter {
 /** Limitação distribuída com contador atômico no PostgreSQL, compartilhado entre instâncias. */
 export class PrismaRateLimiter {
   private cleanupCounter = 0;
-  constructor(private readonly prisma: import("../../generated/prisma/client.js").PrismaClient) {}
+  constructor(private readonly prisma: import("../../generated/prisma/client.ts").PrismaClient) {}
   async consume(key: string, limit: number, now = Date.now(), windowMs = 60_000): Promise<RateLimitResult> {
     if (++this.cleanupCounter % 100 === 0) await this.prisma.rateLimitBucket.deleteMany({ where: { expiraEm: { lt: new Date(now) } } });
     const windowStartMs = Math.floor(now / windowMs) * windowMs;

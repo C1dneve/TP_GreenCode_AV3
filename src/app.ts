@@ -4,7 +4,7 @@ import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import jwt from "@fastify/jwt";
-import type { PrismaClient } from "./generated/prisma/client.js";
+import type { PrismaClient } from "./generated/prisma/client.ts";
 import { registerAuthModule } from "./modules/auth/auth.module.js";
 import { registerUsuariosModule } from "./modules/usuarios/usuarios.module.js";
 import { registerOrganizacoesModule } from "./modules/organizacoes/organizacoes.module.js";

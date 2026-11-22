@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Prisma } from "../../generated/prisma/client.js";
+import type { Prisma } from "../../generated/prisma/client.ts";
 import { errors, isPrismaCode } from "../../shared/domain-error.js";
 import { assertRole } from "../../shared/authorization.js";
 import { pageMeta } from "../../shared/pagination.js";

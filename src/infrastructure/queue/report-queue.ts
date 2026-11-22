@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient } from "../../generated/prisma/client.ts";
 export const REPORT_QUEUE_NAME = "greencode-relatorios";
 export const REPORT_JOB_DEFAULT_OPTIONS = {
   attempts: 5,
