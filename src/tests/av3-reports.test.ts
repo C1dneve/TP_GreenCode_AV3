@@ -111,7 +111,9 @@ test("status de relatório converte BigInt em número JSON seguro nos DTOs inter
   const reportId = randomUUID();
   const report = {
     id: reportId, tipo: "equipamentos", formato: "JSON", status: "COMPLETED",
-    solicitanteUsuarioId: null, parceiroId, organizacaoId,
+    solicitanteUsuarioId: null,
+    parceiroId: partnerId,
+    organizacaoId: organizationId,
     criadoEm: new Date(), iniciadoEm: new Date(), concluidoEm: new Date(), progresso: 100,
     mensagemErro: null, arquivoPath: "private-report.json",
     expiraEm: new Date(Date.now() + 60_000), tamanhoBytes: 1234n,
@@ -140,7 +142,9 @@ test("status de relatório converte BigInt em número JSON seguro nos DTOs inter
 test("status de relatório preserva tamanhoBytes nulo e rejeita BigInt sem precisão JSON segura", async () => {
   const report = {
     id: randomUUID(), tipo: "equipamentos", formato: "JSON", status: "PENDING",
-    solicitanteUsuarioId: null, parceiroId, organizacaoId,
+    solicitanteUsuarioId: null,
+    parceiroId: partnerId,
+    organizacaoId: organizationId,
     criadoEm: new Date(), iniciadoEm: null, concluidoEm: null, progresso: 0,
     mensagemErro: null, arquivoPath: null as string | null, expiraEm: new Date(Date.now() + 60_000), tamanhoBytes: null as bigint | null,
   };
