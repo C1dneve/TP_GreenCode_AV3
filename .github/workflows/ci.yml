@@ -38,7 +38,7 @@ jobs:
       PORT: 3000
       DATABASE_URL: postgresql://greencode:greencode_ci@localhost:5432/greencode_test?schema=public
       REDIS_URL: redis://localhost:6379
-      REPORTS_DIR: ${{ runner.temp }}/greencode-reports
+      REPORTS_DIR: ./storage/reports
       JWT_SECRET: ci-only-secret-with-more-than-32-characters
     steps:
       - uses: actions/checkout@v4
