@@ -132,7 +132,7 @@ test("migrações e seed disponibilizam os parâmetros globais com defaults apro
             "taxaDepreciacaoAnualPercentual"::text AS depreciacao
        FROM "parametros_globais" WHERE "id" = 'global'`,
   );
-  assert.equal(result.rows.length, 1, "Execute npm run db:seed duas vezes antes desta suíte.");
+  assert.equal(result.rows.length, 1, "Execute npm run db:seed antes desta suíte.");
   assert.equal(result.rows[0]?.aliquota, "0.00");
   assert.equal(result.rows[0]?.depreciacao, "15.00");
 });

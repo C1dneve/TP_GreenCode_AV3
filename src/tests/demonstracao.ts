@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import Fastify from "fastify";
@@ -18,18 +19,64 @@ import { RelatoriosAsyncRepository } from "../modules/relatorios-async/relatorio
 import { RelatoriosAsyncService } from "../modules/relatorios-async/relatorios-async.service.js";
 import { DomainError, errors } from "../shared/domain-error.js";
 
+type ScenarioStatus = "APROVADO" | "REPROVADO" | "BLOQUEADO" | "NAO_EXECUTADO";
+type ScenarioTestLevel = "Teste unitário" | "Teste HTTP com doubles" | "Teste de infraestrutura" | "Teste de integração";
+
 interface ScenarioEvidence {
   name: string;
   objective: string;
+  module: string;
   nature: "serviço com repositório simulado" | "rota HTTP real com autenticador/serviço simulado" | "Fastify sem banco" | "serializador puro";
+  testLevel: ScenarioTestLevel;
+  dependencies: string[];
+  sourceFile: string;
+  durationMs: number;
   input: unknown;
   expected: unknown;
   obtained: unknown;
   validations: string[];
-  status: "APROVADO" | "REPROVADO";
+  status: ScenarioStatus;
   failure?: string;
 }
 const evidence: ScenarioEvidence[] = [];
+
+function scenarioModule(name: string): string {
+  const value = name.toLocaleLowerCase("pt-BR");
+  if (value.includes("eficiência")) return "analytics/operational-efficiency";
+  if (value.includes("rentabilidade")) return "analytics/profitability";
+  if (value.includes("vida útil")) return "analytics/useful-life";
+  if (value.includes("api pública") || value.includes("http")) return "api-publica";
+  if (value.includes("relatório")) return "relatorios-async";
+  return "infraestrutura e serialização";
+}
+
+function scenarioLevel(nature: ScenarioEvidence["nature"]): ScenarioTestLevel {
+  if (nature === "rota HTTP real com autenticador/serviço simulado") return "Teste HTTP com doubles";
+  if (nature === "Fastify sem banco") return "Teste de infraestrutura";
+  return "Teste unitário";
+}
+
+function scenarioDependencies(nature: ScenarioEvidence["nature"]): string[] {
+  if (nature === "rota HTTP real com autenticador/serviço simulado") return ["Fastify real", "autenticador real", "Prisma simulado", "controller simulado", "rate limiter simulado"];
+  if (nature === "Fastify sem banco") return ["Fastify", "Swagger/OpenAPI", "sem PostgreSQL/Redis"];
+  if (nature === "serializador puro") return ["Node.js", "serializador de relatórios"];
+  return ["serviço de domínio real", "repositório determinístico simulado"];
+}
+
+function redactEvidence(value: unknown, key = ""): unknown {
+  if (/(api.?key|secret|senha|password|jwt|token|cnpj|authorization|credential)/i.test(key)) return "[REDACTED]";
+  if (typeof value === "string") {
+    return value
+      .replace(/gc_(?:live|test)_[A-Za-z0-9._-]+/g, "[API_KEY_REDACTED]")
+      .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [TOKEN_REDACTED]")
+      .replace(/\b\d{14}\b/g, "[CNPJ_REDACTED]");
+  }
+  if (Array.isArray(value)) return value.map(item => redactEvidence(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => [childKey, redactEvidence(childValue, childKey)]));
+  }
+  return value;
+}
 
 async function scenario(
   name: string,
@@ -40,9 +87,11 @@ async function scenario(
   execute: () => Promise<unknown>,
   validate: (obtained: any) => void,
   validations: string[],
+  metadata: { module?: string; testLevel?: ScenarioTestLevel; dependencies?: string[]; sourceFile?: string } = {},
 ) {
+  const startedAt = process.hrtime.bigint();
   let obtained: unknown = null;
-  let status: ScenarioEvidence["status"] = "APROVADO";
+  let status: ScenarioStatus = "APROVADO";
   let failure: string | undefined;
   try {
     obtained = await execute();
@@ -51,7 +100,16 @@ async function scenario(
     status = "REPROVADO";
     failure = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   }
-  evidence.push({ name, objective, nature, input, expected, obtained, validations, status, ...(failure ? { failure } : {}) });
+  const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+  evidence.push({
+    name, objective, module: metadata.module ?? scenarioModule(name), nature,
+    testLevel: metadata.testLevel ?? scenarioLevel(nature),
+    dependencies: metadata.dependencies ?? scenarioDependencies(nature),
+    sourceFile: metadata.sourceFile ?? "src/tests/demonstracao.ts",
+    durationMs: Math.round(durationMs * 100) / 100,
+    input: redactEvidence(input), expected: redactEvidence(expected), obtained: redactEvidence(obtained),
+    validations, status, ...(failure ? { failure } : {}),
+  });
 }
 
 function addSession(
@@ -105,7 +163,7 @@ async function demonstrateEfficiency() {
 
 async function demonstratePublicApi() {
   const app = Fastify({ logger: false });
-  let scopes = ["lotes:write", "rastreabilidade:read"];
+  let scopes = ["lotes:read", "lotes:write", "rastreabilidade:read"];
   let forceRateLimit = false;
   let revoked = false;
   const generated = generateApiKey();
@@ -116,7 +174,7 @@ async function demonstratePublicApi() {
   };
   const keyRecord = {
     id: "key-demo", prefixo: generated.prefixo, segredoHash: generated.segredoHash,
-    escopos: ["lotes:write", "rastreabilidade:read"], limiteRequisicoesPorMinuto: 60,
+    escopos: ["lotes:read", "lotes:write", "rastreabilidade:read"], limiteRequisicoesPorMinuto: 60,
     maxEquipamentosPorSubmissao: 100, maxPayloadBytes: 1_048_576,
     expiraEm: null,
   };
@@ -135,16 +193,35 @@ async function demonstratePublicApi() {
       resetAt: 1_795_276_860_000, retryAfterSeconds: 37,
     }),
   };
+  let demoLot = {
+    identificadorPublico: "gcl_0123456789abcdef0123456789abcdef", externalId: "erp-demo-001",
+    status: "RECEBIDO", ativo: true, versao: 1,
+    dataEntrada: "2026-11-20T12:00:00.000Z", notaFiscal: "NF-DEMO-001",
+    transportadora: "Transportadora Exemplo", observacoes: "Lote de demonstração",
+    criadoEm: "2026-11-20T12:00:00.000Z", atualizadoEm: "2026-11-20T12:00:00.000Z",
+    quantidadeEquipamentos: 1,
+  };
   const controller = {
     submit: async (body: any, _identity: IntegrationIdentity, _integrationId: string, _idempotency: string) => ({
-      identificadorPublico: "gcl_0123456789abcdef0123456789abcdef", externalId: body.externalId,
-      status: "RECEBIDO", dataEntrada: "2026-11-20T12:00:00.000Z", criadoEm: "2026-11-20T12:00:00.000Z",
+      identificadorPublico: demoLot.identificadorPublico, externalId: body.externalId,
+      status: "RECEBIDO", dataEntrada: demoLot.dataEntrada, criadoEm: demoLot.criadoEm,
       quantidadeEquipamentos: body.equipamentos?.length ?? 0,
       equipamentos: (body.equipamentos ?? []).map((equipment: any) => ({
         tipo: equipment.tipo, marca: equipment.marca, modelo: equipment.modelo,
         estadoFisico: equipment.estadoFisico, statusRastreamento: "AGUARDANDO_TRIAGEM",
       })),
     }),
+    listLots: async () => ({ data: [demoLot], meta: { page: 1, pageSize: 10, total: 1, totalPages: 1 } }),
+    getLot: async () => demoLot,
+    updateLot: async (_id: string, input: any) => {
+      if (input.notaFiscal !== undefined) demoLot.notaFiscal = input.notaFiscal;
+      if (input.transportadora !== undefined) demoLot.transportadora = input.transportadora;
+      if (input.observacoes !== undefined) demoLot.observacoes = input.observacoes;
+      demoLot.versao += 1;
+      demoLot.atualizadoEm = "2026-11-20T12:15:00.000Z";
+      return demoLot;
+    },
+    cancelLot: async (id: string) => ({ ...demoLot, identificadorPublico: id, status: "CANCELADO", ativo: false, versao: 2 }),
     getByPublicId: async (id: string) => ({ identificadorPublico: id }),
     getByExternalId: async (id: string) => ({ externalId: id }),
   } as any;
@@ -164,11 +241,27 @@ async function demonstratePublicApi() {
   try {
     const success = await app.inject({ method: "POST", url: "/api/v1/public/lotes", headers, payload: body });
     const successResult = { statusCode: success.statusCode, headers: { rateLimitRemaining: success.headers["x-ratelimit-remaining"] }, body: success.json() };
-    scopes = [];
+    const lotList = await app.inject({ method: "GET", url: "/api/v1/public/lotes?page=1&pageSize=10", headers });
+    const lotRead = await app.inject({ method: "GET", url: `/api/v1/public/lotes/${demoLot.identificadorPublico}`, headers });
+    const lotUpdate = await app.inject({ method: "PATCH", url: `/api/v1/public/lotes/${demoLot.identificadorPublico}`, headers, payload: { versaoEsperada: 1, notaFiscal: "NF-DEMO-001-REV" } });
+    const lotCancel = await app.inject({ method: "DELETE", url: "/api/v1/public/lotes/gcl_1123456789abcdef0123456789abcdef", headers, payload: { versaoEsperada: 1 } });
+    const lotCrudResults = {
+      listagem: { statusCode: lotList.statusCode, body: lotList.json() },
+      consulta: { statusCode: lotRead.statusCode, body: lotRead.json() },
+      atualizacao: { statusCode: lotUpdate.statusCode, body: lotUpdate.json() },
+      cancelamento: { statusCode: lotCancel.statusCode, body: lotCancel.json() },
+    };
+    scopes = ["lotes:write"];
     partnerRecord.escopos = scopes;
-    const forbidden = await app.inject({ method: "POST", url: "/api/v1/public/lotes", headers, payload: body });
-    const forbiddenResult = { statusCode: forbidden.statusCode, body: forbidden.json() };
-    scopes = ["lotes:write", "rastreabilidade:read"];
+    const noReadScope = await app.inject({ method: "GET", url: `/api/v1/public/lotes/${demoLot.identificadorPublico}`, headers });
+    scopes = ["lotes:read"];
+    partnerRecord.escopos = scopes;
+    const noWriteScope = await app.inject({ method: "POST", url: "/api/v1/public/lotes", headers, payload: body });
+    const forbiddenResult = {
+      consultaSemEscopo: { statusCode: noReadScope.statusCode, body: noReadScope.json() },
+      escritaSemEscopo: { statusCode: noWriteScope.statusCode, body: noWriteScope.json() },
+    };
+    scopes = ["lotes:read", "lotes:write", "rastreabilidade:read"];
     partnerRecord.escopos = scopes;
     forceRateLimit = true;
     const limited = await app.inject({ method: "POST", url: "/api/v1/public/lotes", headers, payload: body });
@@ -186,7 +279,7 @@ async function demonstratePublicApi() {
     return {
       input: { headers: { ...headers, "x-api-key": "[SEGREDO FICTÍCIO GERADO NO TESTE; OMITIDO]" }, body },
       scenarios: {
-        submissaoAutorizada: successResult, semEscopo: forbiddenResult, limiteExcedido: rateLimitResult,
+        submissaoAutorizada: successResult, cicloDeVidaLote: lotCrudResults, semEscopo: forbiddenResult, limiteExcedido: rateLimitResult,
         chaveInvalida: invalidKeyResult, chaveRevogada: revokedKeyResult, semChave: noKeyResult,
       },
       nature: "A rota e o createApiKeyAuthenticator reais são executados; Prisma e controller/limiter são simulados. A API Key é gerada em memória e não é incluída nas evidências.",
@@ -321,6 +414,14 @@ async function demonstrateReportRetry() {
   return { obtained: { status: result.status, message: result.mensagem, event: outbox[0]?.evento, jobIdUsesRetrySuffix: outbox[0]?.payload?.jobId?.startsWith("job-relatorio-retry-demo-retry-") ?? false, auditAction: audit[0]?.acao } };
 }
 
+function readCommitHash(): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || "não disponível";
+  } catch {
+    return "não disponível nesta cópia";
+  }
+}
+
 async function main() {
   const startedAt = new Date().toISOString();
   await scenario(
@@ -411,7 +512,7 @@ async function main() {
     "Exercita a rota Fastify real e o createApiKeyAuthenticator real; Prisma, controller e rate limiter usam doubles determinísticos, sem consulta ao PostgreSQL.",
     "rota HTTP real com autenticador/serviço simulado",
     { method: "POST", path: "/api/v1/public/lotes", apiKey: "[FICTÍCIA]", integrationId: "gci_DEMO", idempotencyKey: "demo-submission-001", body: { externalId: "erp-demo-001", notaFiscal: "NF-DEMO-001", transportadora: "Transportadora Exemplo", equipamentos: [{ tipo: "NOTEBOOK", marca: "Exemplo", modelo: "NB-14", anoFabricacao: 2024, estadoFisico: "BOM_ESTADO", pesoQuilogramas: "2.500" }] } },
-    { submissao: 201, faltaEscopo: 403, limite: 429, apiKeyAusente: 401, apiKeyInvalida: 401, apiKeyRevogada: 401 },
+    { submissao: 201, listagem: 200, consulta: 200, atualizacao: 200, cancelamento: 200, faltaEscopo: 403, limite: 429, apiKeyAusente: 401, apiKeyInvalida: 401, apiKeyRevogada: 401 },
     demonstratePublicApi,
     output => {
       assert.equal(output.scenarios.submissaoAutorizada.statusCode, 201);
@@ -422,8 +523,16 @@ async function main() {
       assert.equal(output.scenarios.chaveInvalida.statusCode, 401);
       assert.equal(output.scenarios.chaveRevogada.statusCode, 401);
       assert.equal(output.scenarios.submissaoAutorizada.body.quantidadeEquipamentos, 1);
+      assert.equal(output.scenarios.cicloDeVidaLote.listagem.statusCode, 200);
+      assert.equal(output.scenarios.cicloDeVidaLote.consulta.statusCode, 200);
+      assert.equal(output.scenarios.cicloDeVidaLote.atualizacao.statusCode, 200);
+      assert.equal(output.scenarios.cicloDeVidaLote.atualizacao.body.versao, 2);
+      assert.equal(output.scenarios.cicloDeVidaLote.cancelamento.statusCode, 200);
+      assert.equal(output.scenarios.cicloDeVidaLote.cancelamento.body.status, "CANCELADO");
+      assert.equal(output.scenarios.semEscopo.consultaSemEscopo.statusCode, 403);
+      assert.equal(output.scenarios.semEscopo.escritaSemEscopo.statusCode, 403);
     },
-    ["A rota Fastify real valida schema e headers obrigatórios.", "O createApiKeyAuthenticator real valida formato/hash com registro Prisma simulado.", "A requisição autorizada retorna HTTP 201.", "Falta de escopo retorna HTTP 403.", "Excesso retorna HTTP 429 com Retry-After.", "Chave ausente, inválida e revogada retornam HTTP 401.", "O Prisma e o controller/limiter são simulados; não há prova de persistência PostgreSQL."],
+    ["A rota Fastify real valida schema e headers obrigatórios.", "A submissão retorna HTTP 201; listagem e consulta retornam HTTP 200.", "A rota PATCH aplica a versão recebida e retorna versão 2.", "A rota DELETE demonstra cancelamento lógico sem exclusão física do contrato.", "O escopo lotes:read não autoriza escrita e lotes:write não autoriza leitura básica.", "O createApiKeyAuthenticator real valida formato/hash com registro Prisma simulado.", "Excesso retorna HTTP 429 com Retry-After.", "Chave ausente, inválida e revogada retornam HTTP 401.", "O Prisma, controller e limiter são simulados; não há prova de persistência PostgreSQL."],
   );
 
   await scenario(
@@ -550,14 +659,19 @@ async function main() {
   );
 
   const passed = evidence.filter(item => item.status === "APROVADO").length;
-  const failed = evidence.length - passed;
+  const failed = evidence.filter(item => item.status === "REPROVADO").length;
+  const blocked = evidence.filter(item => item.status === "BLOQUEADO").length;
+  const notExecuted = evidence.filter(item => item.status === "NAO_EXECUTADO").length;
   const markdown = [
     "# Evidências da demonstração automatizada — GreenCode AV3", "",
-    `- Executado em: ${startedAt}`, `- Runtime: ${process.version}`, `- Plataforma: ${process.platform}/${process.arch}`,
-    `- Cenários: ${evidence.length}`, `- Aprovados: ${passed}`, `- Reprovados: ${failed}`, "",
+    `- Executado em: ${startedAt}`, `- Commit: ${readCommitHash()}`, `- Runtime: ${process.version}`, `- Plataforma: ${process.platform}/${process.arch}`,
+    `- Tipo de execução: teste demonstrativo (Fastify com doubles e serviços de domínio)`,
+    `- Cenários: ${evidence.length}`, `- Aprovados: ${passed}`, `- Reprovados: ${failed}`, `- Bloqueados: ${blocked}`, `- Não executados neste modo: ${notExecuted}`, "",
     "> Esta demonstração registra valores retornados nesta execução. Cenários que usam mocks estão identificados; não equivalem a integração com PostgreSQL/Redis.", "",
     ...evidence.flatMap((item, index) => [
-      `## ${index + 1}. ${item.name}`, "", `**Objetivo:** ${item.objective}`, "", `**Natureza:** ${item.nature}.`, "",
+      `## ${index + 1}. ${item.name}`, "", `**Objetivo:** ${item.objective}`, "",
+      `**Módulo:** ${item.module}  `, `**Natureza:** ${item.nature}  `, `**Classificação:** ${item.testLevel}  `,
+      `**Dependências:** ${item.dependencies.join(", ")}  `, `**Arquivo do cenário:** ${item.sourceFile}  `, `**Duração:** ${item.durationMs.toFixed(2)} ms`, "",
       "**Entrada**", "```json", JSON.stringify(item.input, null, 2), "```", "",
       "**Resultado esperado (asserts)**", "```json", JSON.stringify(item.expected, null, 2), "```", "",
       "**Resultado obtido (retorno real)**", "```json", JSON.stringify(item.obtained, null, 2), "```", "",
@@ -584,8 +698,11 @@ async function main() {
   await writeFile(reportPath, `${preservedHistory}\n\n${generatedSectionMarker}\n\n${markdown}\n`, "utf8");
 
   console.log("\n========== GREENCODE AV3 · TESTES DEMONSTRATIVOS ==========");
+  console.log(`Início: ${startedAt} | Node: ${process.version} | Plataforma: ${process.platform}/${process.arch} | Commit: ${readCommitHash()}`);
   for (const [index, item] of evidence.entries()) {
     console.log(`\n[${item.status}] ${index + 1}. ${item.name}`);
+    console.log(`MÓDULO: ${item.module} | TIPO: ${item.testLevel} | DURAÇÃO: ${item.durationMs.toFixed(2)} ms`);
+    console.log(`DEPENDÊNCIAS: ${item.dependencies.join(", ")} | ARQUIVO: ${item.sourceFile}`);
     console.log("ENTRADA:", JSON.stringify(item.input, null, 2));
     console.log("ESPERADO (critérios verificados):", JSON.stringify(item.expected, null, 2));
     console.log("OBTIDO (retorno desta execução):", JSON.stringify(item.obtained, null, 2));
@@ -594,8 +711,8 @@ async function main() {
     console.log("DIFERENÇA NOS ASSERTS:", item.status === "APROVADO" ? "Nenhuma; todos os asserts foram satisfeitos." : item.failure ?? "As condições esperadas não foram satisfeitas.");
     if (item.failure) console.log("FALHA:", item.failure);
   }
-  console.log(`\nResumo: ${passed} aprovados, ${failed} reprovados. Evidências: ${reportPath}`);
-  if (failed > 0) process.exitCode = 1;
+  console.log(`\nResumo: ${evidence.length} cenários | ${passed} aprovados | ${failed} reprovados | ${blocked} bloqueados | ${notExecuted} não executados. Evidências: ${reportPath}`);
+  if (failed > 0 || blocked > 0) process.exitCode = 1;
 }
 
 main().catch(error => {

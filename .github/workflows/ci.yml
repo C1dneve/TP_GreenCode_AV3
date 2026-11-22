@@ -23,11 +23,22 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       NODE_ENV: test
       HOST: 127.0.0.1
       PORT: 3000
       DATABASE_URL: postgresql://greencode:greencode_ci@localhost:5432/greencode_test?schema=public
+      REDIS_URL: redis://localhost:6379
+      REPORTS_DIR: ${{ runner.temp }}/greencode-reports
       JWT_SECRET: ci-only-secret-with-more-than-32-characters
     steps:
       - uses: actions/checkout@v4
@@ -36,34 +47,23 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: npm run prisma:validate
-      - run: npm run prisma:generate
       - run: npm run db:deploy
       - run: npm run db:seed
-      - run: npm run db:seed
-      - run: npm test
+      - run: npm run build
+      - name: Unit tests
+        run: node --test --test-reporter=spec dist/src/tests/*.test.js
       - name: Demonstrative scenarios and report
-        id: demonstracao
-        run: npm run test:demonstracao
-      - name: Check whether this run generated fresh evidence
-        id: evidencia
-        if: always()
-        shell: bash
-        run: |
-          if git diff --quiet -- docs/evidencias-testes-av3.md; then
-            echo "generated=false" >> "$GITHUB_OUTPUT"
-            echo "No new demonstration report was generated in this run."
-          else
-            echo "generated=true" >> "$GITHUB_OUTPUT"
-          fi
+        run: node dist/src/tests/demonstracao.js
+      - name: Integration tests with PostgreSQL 17 and Redis 7
+        run: node --test --test-concurrency=1 --test-reporter=spec dist/src/tests/integration/*.integration.test.js
       - name: Upload demonstrative evidence
-        if: ${{ always() && steps.evidencia.outputs.generated == 'true' }}
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: greencode-av3-evidencias-demonstracao
           path: docs/evidencias-testes-av3.md
           if-no-files-found: error
           retention-days: 14
-      - run: npm run test:integration
 
   docker-compose-smoke:
     name: Docker Compose smoke test

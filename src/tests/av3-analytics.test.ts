@@ -316,6 +316,7 @@ test("vida útil consolida tipos, previsões disponíveis/indisponíveis e obser
     falhas: [
       { id: "failure-a1", equipamentoId: "notebook-a", ocorridoEm: new Date("2024-02-01T00:00:00Z"), categoria: "HARDWARE", severidade: "ALTA", resolvidaEm: null },
       { id: "failure-a2", equipamentoId: "notebook-a", ocorridoEm: new Date("2024-03-01T00:00:00Z"), categoria: "BATERIA", severidade: "ALTA", resolvidaEm: new Date("2024-03-10T00:00:00Z") },
+      { id: "failure-a3", equipamentoId: "notebook-a", ocorridoEm: new Date("2024-04-01T00:00:00Z"), categoria: "SOFTWARE", severidade: "CRITICA", resolvidaEm: null },
     ],
     depreciacoes: [
       { avaliadoEm: new Date("2021-01-01T00:00:00Z"), valorEstimado: "900" },
@@ -357,20 +358,45 @@ test("vida útil consolida tipos, previsões disponíveis/indisponíveis e obser
   const notebook = result.previsoesPorTipo.find(item => item.tipo === "NOTEBOOK")!;
   const notebookPredictions = result.previsoes.filter(item => item.tipo === "NOTEBOOK");
   const notebookMonths = notebookPredictions.map(item => item.mesesRemanescentesEstimados as number).sort((a, b) => a - b);
+  const notebookAPrediction = result.previsoes.find(item => item.equipamentoId === "notebook-a")!;
+  const notebookBPrediction = result.previsoes.find(item => item.equipamentoId === "notebook-b")!;
+  assert.equal(notebookAPrediction.falhasObservadas, 3);
+  assert.equal(notebookAPrediction.falhasNaoResolvidas, 2);
+  assert.deepEqual(notebookAPrediction.falhasPorSeveridade, [
+    { severidade: "ALTA", quantidade: 2 }, { severidade: "CRITICA", quantidade: 1 },
+  ]);
+  assert.equal(notebookAPrediction.intervaloMedioEntreFalhasDias, 30);
+  assert.equal(notebookBPrediction.intervaloMedioEntreFalhasDias, null, "Uma única falha não permite estimar intervalo entre ocorrências.");
+
+  const noFailureRepository = {
+    lifeData: async () => [{ ...notebookA, falhas: [] }],
+    saveRun: async () => undefined,
+  } as unknown as AnalyticsRepository;
+  const noFailureResult = await new UsefulLifeService(noFailureRepository).execute();
+  assert.equal(noFailureResult.previsoes[0]!.mesesRemanescentesEstimados, notebookAPrediction.mesesRemanescentesEstimados,
+    "A previsão OLS não recebe desconto por quantidade de falhas sem calibração empírica.");
+  const severityRepository = {
+    lifeData: async () => [{ ...notebookA, falhas: notebookA.falhas.map(failure => ({ ...failure, severidade: "CRITICA" })) }],
+    saveRun: async () => undefined,
+  } as unknown as AnalyticsRepository;
+  const severityResult = await new UsefulLifeService(severityRepository).execute();
+  assert.equal(severityResult.previsoes[0]!.mesesRemanescentesEstimados, notebookAPrediction.mesesRemanescentesEstimados,
+    "A severidade é exibida como diagnóstico, mas não aplica peso preditivo arbitrário.");
   assert.equal(notebook.equipamentosAnalisados, 2);
   assert.equal(notebook.previsoesDisponiveis, 2);
   assert.equal(notebook.previsoesIndisponiveis, 0);
   assert.equal(notebook.observacoesHistoricas, 6);
-  assert.equal(notebook.falhasObservadas, 3);
-  assert.equal(notebook.falhasNaoResolvidas, 2);
+  assert.equal(notebook.falhasObservadas, 4);
+  assert.equal(notebook.falhasNaoResolvidas, 3);
   assert.deepEqual(notebook.falhasPorCategoria, [
     { categoria: "BATERIA", quantidade: 1 },
     { categoria: "CONEXAO", quantidade: 1 },
     { categoria: "HARDWARE", quantidade: 1 },
+    { categoria: "SOFTWARE", quantidade: 1 },
   ]);
   assert.deepEqual(notebook.falhasPorSeveridade, [
-    { severidade: "ALTA", quantidade: 2 }, { severidade: "BAIXA", quantidade: 1 },
-  ]);
+    { severidade: "ALTA", quantidade: 2 }, { severidade: "BAIXA", quantidade: 1 }, { severidade: "CRITICA", quantidade: 1 },
+  ].sort((a, b) => a.severidade.localeCompare(b.severidade)));
   assert.equal(notebook.ultimaFalhaEm, "2024-04-01T00:00:00.000Z");
   assert.equal(notebook.vidaUtilRemanescenteMediaMeses, Math.round(notebookMonths.reduce((a, b) => a + b, 0) / 2 * 10) / 10);
   assert.equal(notebook.vidaUtilRemanescenteMedianaMeses, Math.round((notebookMonths[0]! + notebookMonths[1]!) / 2 * 10) / 10);
@@ -400,6 +426,19 @@ test("vida útil consolida tipos, previsões disponíveis/indisponíveis e obser
     falhasObservadas: 0, falhasNaoResolvidas: 0, falhasPorCategoria: [], falhasPorSeveridade: [],
     ultimaFalhaEm: null, confiabilidadeMedia: null,
   });
+
+  const lowFitEquipment = {
+    ...base, id: "low-fit-equipment", tipo: "NOTEBOOK",
+    depreciacoes: [
+      { avaliadoEm: new Date("2021-01-01T00:00:00Z"), valorEstimado: "900" },
+      { avaliadoEm: new Date("2022-01-01T00:00:00Z"), valorEstimado: "100" },
+      { avaliadoEm: new Date("2023-01-01T00:00:00Z"), valorEstimado: "800" },
+    ],
+  };
+  const lowFit = await new UsefulLifeService({ lifeData: async () => [lowFitEquipment], saveRun: async () => undefined } as unknown as AnalyticsRepository).execute();
+  assert.equal(lowFit.previsoesDisponiveis, 0);
+  assert.ok((lowFit.previsoes[0]?.rSquared ?? 1) < 0.35);
+  assert.match(lowFit.previsoes[0]?.motivoIndisponibilidade ?? "", /R² inferior a 0,35/);
 
   const empty = await new UsefulLifeService({ lifeData: async () => [], saveRun: async () => undefined } as unknown as AnalyticsRepository).execute();
   assert.equal(empty.equipamentosAnalisados, 0);

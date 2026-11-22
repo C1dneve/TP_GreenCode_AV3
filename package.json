@@ -23,7 +23,8 @@
     "worker": "node dist/src/worker.js",
     "start:worker": "node dist/src/worker.js",
     "test:unit": "npm run build && node --test --test-reporter=spec dist/src/tests/*.test.js",
-    "test:demonstracao": "npm run build && node dist/src/tests/demonstracao.js"
+    "test:demonstracao": "npm run build && node dist/src/tests/demonstracao.js",
+    "test:av3": "npm run prisma:validate && npm run build && node --test --test-reporter=spec dist/src/tests/*.test.js && node dist/src/tests/demonstracao.js && node --test --test-concurrency=1 --test-reporter=spec dist/src/tests/integration/*.integration.test.js"
   },
   "dependencies": {
     "@fastify/jwt": "^10.2.5",

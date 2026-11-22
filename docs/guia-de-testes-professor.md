@@ -1,113 +1,66 @@
 # Guia de execução e testes — GreenCode AV3
 
-Este guia descreve como preparar o ambiente, iniciar a API, executar testes automatizados e demonstrar a integração pública. A sequência foi escrita para Windows 10 ou superior e Ubuntu 24.04.03 (24.04.03 na grafia solicitada para avaliação) ou superior, incluindo distribuições derivadas do Ubuntu compatíveis com Docker Engine e Docker Compose. Os comandos Docker Compose funcionam no PowerShell e no Bash; os comandos específicos do terminal estão identificados.
+Este roteiro permite iniciar o GreenCode, autenticar como administrador, configurar um parceiro de integração, percorrer o ciclo de vida público de lotes e solicitar relatórios. Ao final estão os comandos de testes e o significado das evidências. Os nomes de campos e os caminhos abaixo correspondem aos contratos publicados pelo Swagger.
 
-## 1. Preparar e iniciar o projeto
+## 1. Preparar o ambiente
 
-### Pré-requisitos
+### Requisitos
 
-- **Windows:** Windows 10 ou superior, Docker Desktop instalado e iniciado. Habilite virtualização e WSL2 quando utilizar o backend WSL2. O Docker Desktop inclui Docker Compose; valide com `docker compose version`.
-- **Linux:** Ubuntu 24.04.03 (24.04.03 na grafia solicitada para avaliação) ou superior, ou distribuição derivada do Ubuntu compatível com Docker Engine e plugin Docker Compose. Instale e inicie o Docker Engine, instale o plugin Compose e valide com `docker compose version`.
-- Acesso à pasta raiz do projeto, onde estão `Dockerfile`, `docker-compose.yml` e `.env.example`.
-- Conexão à internet na primeira construção para baixar as imagens Docker e dependências npm.
+A execução recomendada usa Docker Desktop no Windows ou Docker Engine com o plugin Docker Compose em Linux. Node.js, PostgreSQL e Redis não precisam estar instalados diretamente no host quando a aplicação é executada em containers. Para executar npm no host, utilize Node.js 24.x, PostgreSQL 17 e Redis 7.
 
-A execução recomendada usa Docker Compose, portanto não exige Node.js, PostgreSQL ou Redis instalados diretamente no host. Para executar comandos npm diretamente na máquina, instale Node.js 24.x; para serviços locais sem Docker, disponibilize também PostgreSQL 17 e Redis 7. A compatibilidade declarada para distribuições derivadas descreve os requisitos de Docker, mas não significa que cada distribuição ou versão tenha sido individualmente testada ou homologada.
+### Configurar variáveis locais
 
-### 1.1 Criar o arquivo `.env`
+Na raiz do projeto, copie o modelo de ambiente:
 
-**Windows (PowerShell):**
+**PowerShell**
 
 ```powershell
 if (-not (Test-Path .\.env)) { Copy-Item .env.example .env }
 ```
 
-**Ubuntu ou distribuição derivada compatível (Bash):**
+**Bash**
 
 ```bash
-if [ ! -f .env ]; then cp .env.example .env; fi
-nano .env
+cp .env.example .env
 ```
 
-Configure os valores locais de `POSTGRES_PASSWORD`, `JWT_SECRET`, `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_NAME` e `BOOTSTRAP_ADMIN_PASSWORD`. A senha do administrador deve ter pelo menos 12 caracteres. Para evitar problemas ao montar a URL PostgreSQL pelo Compose, prefira letras, números e `_` em `POSTGRES_PASSWORD`.
+Edite `.env` e substitua ao menos `POSTGRES_PASSWORD`, `JWT_SECRET`, `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_NAME` e `BOOTSTRAP_ADMIN_PASSWORD`. A senha administrativa deve respeitar o tamanho mínimo esperado pela aplicação. Use valores locais de avaliação; não reutilize credenciais pessoais ou de produção e não envie o arquivo `.env` para o repositório.
 
-Os valores de `.env.example` são somente para avaliação local. Não use essas credenciais em produção, não compartilhe o `.env` e não o versione. O Compose fornece `DATABASE_URL` aos containers; não é necessário colocá-la no `.env` para o fluxo Docker.
-
-### 1.2 Gerar um segredo JWT aleatório
-
-**Windows (PowerShell):**
-
-```powershell
-$bytes = New-Object byte[] 32
-$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
-$jwtSecret = ([BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant()
-$envLines = Get-Content .\.env
-if (-not ($envLines | Where-Object { $_ -match '^JWT_SECRET=' })) { throw 'A linha JWT_SECRET não foi encontrada no .env.' }
-$envLines = $envLines -replace '^JWT_SECRET=.*$', "JWT_SECRET=$jwtSecret"
-Set-Content -Path .\.env -Value $envLines -Encoding ascii
-Write-Host 'JWT_SECRET gerado e gravado no .env; o valor não foi exibido.'
-```
-
-**Ubuntu ou distribuição derivada compatível (Bash):**
+Gere `JWT_SECRET` aleatório. Em Bash, por exemplo:
 
 ```bash
-set -eu
-secret="$(openssl rand -hex 32)"
-grep -q '^JWT_SECRET=' .env || { echo 'A linha JWT_SECRET não foi encontrada no .env.' >&2; exit 1; }
-sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${secret}/" .env
-unset secret
-echo 'JWT_SECRET gerado e gravado no .env; o valor não foi exibido.'
+openssl rand -hex 32
 ```
 
-Não envie nem publique o segredo JWT. Ele é usado para assinar os tokens dos usuários internos.
+Copie o valor gerado para `JWT_SECRET`. A chave não deve ser publicada nem colada em evidências.
 
-### 1.3 Validar a configuração
+### Validar e iniciar
 
-Na raiz do projeto:
-
-```shell
+```bash
 docker compose config -q
 docker compose --profile tests config -q
-```
-
-Se os comandos terminarem sem mensagem de erro, a configuração do Compose foi interpretada. Se aparecer variável obrigatória ausente, confira o `.env` e execute novamente.
-
-### 1.4 Construir e iniciar a aplicação
-
-```shell
 docker compose up --build -d
 docker compose ps
 ```
 
-O Compose inicia `postgres` e depois `api`. O container da API aplica migrations (`npm run db:deploy`) e executa o seed (`npm run db:seed`) antes de iniciar o servidor.
-
-Aguarde `postgres` e `api` ficarem `healthy`. Se estiverem `starting`, aguarde alguns segundos e consulte `docker compose ps` novamente.
-
-### 1.5 Verificar a API
-
-**Windows (PowerShell):**
-
-```powershell
-Invoke-RestMethod http://localhost:3000/health
-```
-
-**Ubuntu ou distribuição derivada compatível (Bash):**
+O serviço `api` aguarda o PostgreSQL saudável, aplica migrations e executa o seed antes de iniciar. O worker é um processo separado e depende do PostgreSQL e Redis. Verifique os logs em terminais separados:
 
 ```bash
-curl --fail --show-error http://localhost:3000/health
+docker compose logs -f api
+docker compose logs -f worker
 ```
 
-Esperado: JSON com `status: ok` e `service: greencode-api`.
-
-Abra no navegador:
+### Endereços
 
 - Swagger UI: `http://localhost:3000/docs/`
-- OpenAPI JSON: `http://localhost:3000/docs/json`
+- Documento OpenAPI: `http://localhost:3000/docs/json`
 - Health check: `http://localhost:3000/health`
 
-### 1.6 Login inicial no Swagger
+O health check pode ser consultado com `curl --fail http://localhost:3000/health` ou `Invoke-RestMethod http://localhost:3000/health` no PowerShell. A resposta deve indicar `status: "ok"` e `service: "greencode-api"`.
 
-No Swagger, abra `POST /api/v1/auth/login`, clique em **Try it out** e envie:
+## 2. Entrar como administrador
+
+No Swagger, execute `POST /api/v1/auth/login`:
 
 ```json
 {
@@ -116,75 +69,43 @@ No Swagger, abra `POST /api/v1/auth/login`, clique em **Try it out** e envie:
 }
 ```
 
-Substitua os valores pelos configurados no `.env`. Esperado: HTTP `200`, com `accessToken`, `tokenType: Bearer`, `expiresIn: 1800` e dados públicos do usuário.
+Use os valores do `.env`. A resposta esperada é HTTP `200` e contém `accessToken`, `tokenType` e informações públicas do usuário. Clique em **Authorize**, escolha `bearerAuth` e informe o token retornado. A administração de parceiros, API Keys e associações exige papel `ADMINISTRADOR`.
 
-Clique em **Authorize** e informe o token no esquema `bearerAuth` conforme solicitado pelo Swagger. A partir daí, as rotas administrativas e internas autorizadas podem ser testadas.
+O seed cria o usuário inicial quando ele ainda não existe. Alterar `BOOTSTRAP_ADMIN_PASSWORD` depois da primeira inicialização não redefine a senha de uma conta já persistida.
 
-O seed cria o administrador somente quando o usuário ainda não existe. Se o volume já foi utilizado, mudar a senha no `.env` não redefine a senha da conta existente. Para recriar o ambiente do zero, veja a seção 1.7.
+## 3. Criar um parceiro de integração
 
-### 1.7 Logs, parada e reinicialização
+### 3.1 Encontrar uma organização ativa
 
-Acompanhar logs da API:
+Com o JWT do administrador, consulte `GET /api/v1/organizacoes?page=1&pageSize=20&ativo=true`. Escolha uma organização ativa e guarde seu UUID como `<organizacaoId>` para a criação do vínculo administrativo. Esse UUID não será enviado pelo parceiro nas chamadas públicas.
 
-```shell
-docker compose logs -f api
-```
+### 3.2 Cadastrar parceiro
 
-Parar sem apagar os dados:
-
-```shell
-docker compose down
-```
-
-Reiniciar:
-
-```shell
-docker compose up -d
-```
-
-**Somente para descartar os dados locais e começar do zero:**
-
-```shell
-docker compose down -v
-docker compose up --build -d
-```
-
-O comando `down -v` apaga os volumes `greencode_pgdata` e `greencode_test_pgdata` associados ao projeto Compose. Não o execute se precisar preservar os dados locais.
-
-## 2. Como testar pelo Swagger
-
-A API possui dois mecanismos de autenticação:
-
-- **JWT (`bearerAuth`):** usuários internos. A administração de parceiros e API Keys exige o papel `ADMINISTRADOR`.
-- **API Key (`apiKeyAuth`):** sistemas parceiros. A chave é enviada no header `X-API-Key`; submissões também exigem `X-Integration-ID` e `Idempotency-Key`.
-
-O Swagger permite autorizar os dois mecanismos. Para operações administrativas, use `bearerAuth`. Para endpoints públicos, clique em **Authorize** e informe o segredo da API Key no campo `apiKeyAuth`. Não use o token JWT no lugar da API Key.
-
-## 3. Jornada principal de demonstração da API pública
-
-A seed prepara organizações demonstrativas ativas. Primeiro, autentique como Administrador e consulte `GET /api/v1/organizacoes?page=1&pageSize=20&ativo=true`. Escolha uma organização ativa e copie seu `id` para `<organizacaoId>`. Não use o CNPJ como identificador de integração.
-
-### A. Cadastrar um parceiro
-
-Execute `POST /api/v1/parceiros` com `bearerAuth`:
+Execute `POST /api/v1/parceiros`:
 
 ```json
 {
   "nome": "Parceiro de Avaliação AV3",
-  "descricao": "Parceiro criado para demonstrar a integração pública",
-  "escopos": ["lotes:write", "rastreabilidade:read"],
-  "limiteRequisicoesPorMinuto": 60,
+  "descricao": "Integração usada no roteiro de avaliação",
+  "escopos": [
+    "lotes:read",
+    "lotes:write",
+    "rastreabilidade:read",
+    "reports:read",
+    "reports:write"
+  ],
+  "limiteRequisicoesPorMinuto": 120,
   "maxEquipamentosPorSubmissao": 100,
   "maxPayloadBytes": 1048576,
   "permiteLoteSemEquipamentos": true
 }
 ```
 
-Esperado: HTTP `201`. Guarde o campo `id` como `<parceiroId>`. A listagem e a consulta ficam disponíveis em `GET /api/v1/parceiros` e `GET /api/v1/parceiros/{parceiroId}`. Atualizações usam `PATCH /api/v1/parceiros/{parceiroId}`; ativação e desativação usam os sufixos `/ativacao` e `/desativacao`.
+Esperado: HTTP `201`. Guarde o campo `id` como `<parceiroId>`. O conjunto de escopos do parceiro define o teto de permissões que poderá ser concedido às chaves.
 
-### B. Autorizar uma organização
+### 3.3 Vincular organização
 
-Execute `POST /api/v1/parceiros/{parceiroId}/organizacoes`:
+Execute `POST /api/v1/parceiros/{parceiroId}/organizacoes`, substituindo o parâmetro pelo ID anterior:
 
 ```json
 {
@@ -192,41 +113,48 @@ Execute `POST /api/v1/parceiros/{parceiroId}/organizacoes`:
 }
 ```
 
-Esperado: HTTP `201`. Guarde `identificadorPublico` como `<integrationId>` e `id` da associação como `<associacaoId>`. O identificador público deverá ser enviado no header `X-Integration-ID`. Consulte os vínculos em `GET /api/v1/parceiros/{parceiroId}/organizacoes`.
+Esperado: HTTP `201`. Guarde `identificadorPublico` como `<integrationId>`. Esse valor opaco, e não o UUID interno da organização, será enviado no header `X-Integration-ID`.
 
-A revogação do vínculo utiliza `DELETE /api/v1/parceiros/{parceiroId}/organizacoes/{associacaoId}`. Após revogar, novas submissões e consultas daquele parceiro para a organização devem ser bloqueadas.
-
-### C. Criar uma API Key
+### 3.4 Criar API Key
 
 Execute `POST /api/v1/parceiros/{parceiroId}/chaves`:
 
 ```json
 {
-  "nome": "Chave de avaliação AV3",
-  "escopos": ["lotes:write", "rastreabilidade:read"]
+  "nome": "Chave da avaliação AV3",
+  "escopos": [
+    "lotes:read",
+    "lotes:write",
+    "rastreabilidade:read",
+    "reports:read",
+    "reports:write"
+  ],
+  "limiteRequisicoesPorMinuto": 60,
+  "maxEquipamentosPorSubmissao": 50,
+  "maxPayloadBytes": 524288
 }
 ```
 
-Esperado: HTTP `201`, com `apiKey` (metadados) e `segredo` (valor completo). **Copie o campo `segredo` imediatamente:** ele é exibido uma única vez e não poderá ser recuperado em consultas posteriores. Guarde também `apiKey.id` como `<apiKeyId>`.
+Esperado: HTTP `201`, com `apiKey` e `segredo`. Copie o segredo completo uma única vez e guarde `apiKey.id` como `<apiKeyId>`. O GreenCode não permite recuperar o segredo em consultas posteriores; o banco guarda somente o hash. Não inclua o segredo em capturas de tela, relatórios ou evidências.
 
-As rotas `GET /api/v1/parceiros/{parceiroId}/chaves` e `GET /api/v1/parceiros/{parceiroId}/chaves/{apiKeyId}` retornam metadados, não o segredo. A atualização usa `PATCH .../chaves/{apiKeyId}` e a revogação usa `POST .../chaves/{apiKeyId}/revogacao`.
+No Swagger, autorize também o esquema `apiKeyAuth` com o segredo. Nas rotas públicas, use os headers aplicáveis:
 
-### D. Submeter um lote com equipamentos
+- `X-API-Key`: segredo da chave.
+- `X-Integration-ID`: `<integrationId>` para operações que exigem associação organizacional.
+- `Idempotency-Key`: identificador único da operação de submissão de lote.
 
-No Swagger, autorize `apiKeyAuth` com o segredo copiado. Execute `POST /api/v1/public/lotes` e informe os três headers:
+## 4. Demonstrar o ciclo de vida público dos lotes
 
-- `X-API-Key`: segredo da API Key;
-- `X-Integration-ID`: `<integrationId>` obtido na associação;
-- `Idempotency-Key`: valor único para esta operação, por exemplo `avaliacao-av3-lote-001`.
+### 4.1 CREATE — Submeter lote
 
-Corpo de exemplo:
+Execute `POST /api/v1/public/lotes`, com os três headers descritos acima:
 
 ```json
 {
   "externalId": "erp-av3-lote-001",
   "notaFiscal": "NF-AV3-001",
   "transportadora": "Transportadora de Avaliação",
-  "observacoes": "Lote criado durante a avaliação da API pública",
+  "observacoes": "Lote de demonstração criado pelo parceiro",
   "equipamentos": [
     {
       "tipo": "NOTEBOOK",
@@ -241,195 +169,206 @@ Corpo de exemplo:
 }
 ```
 
-Esperado: HTTP `201`, identificador público `gcl_...`, status `RECEBIDO`, quantidade de equipamentos e dados públicos básicos. Guarde `identificadorPublico` como `<identificadorPublico>`.
+Esperado: HTTP `201`, identificador público `gcl_...`, status `RECEBIDO` e quantidade de equipamentos igual a 1. Guarde `identificadorPublico` como `<lotePublico>`. A submissão utiliza transação, referência externa, idempotência e auditoria. Para testar lote sem equipamentos, remova `equipamentos` e use novo externalId e novo `Idempotency-Key`; isso só é permitido quando `permiteLoteSemEquipamentos` estiver habilitado.
 
-O campo `equipamentos` é opcional. Para testar lote sem equipamentos, envie outro `POST` com novo `Idempotency-Key` e remova o campo `equipamentos`; isso é permitido porque o parceiro do exemplo foi criado com `permiteLoteSemEquipamentos: true`.
+### 4.2 READ — Listar lotes próprios
 
-### E. Consultar rastreabilidade
-
-Com a mesma API Key que possui `rastreabilidade:read`, execute:
+Execute:
 
 ```text
-GET /api/v1/public/rastreabilidade/lotes/{identificadorPublico}
+GET /api/v1/public/lotes?page=1&pageSize=20&status=RECEBIDO
 ```
 
-Use `<identificadorPublico>` retornado na submissão. A resposta esperada contém identificador público, status, datas, quantidade de equipamentos, histórico operacional e os campos autorizados dos equipamentos.
+Filtros disponíveis: `status`, `externalId`, `dataEntradaDe`, `dataEntradaAte` e `ativo`, além de `page` e `pageSize`. A resposta contém `data` e `meta` (`page`, `pageSize`, `total`, `totalPages`). Somente lotes pertencentes ao parceiro autenticado e em organizações com vínculo ativo podem aparecer.
 
-Também é possível consultar pela referência externa contextualizada ao parceiro:
+### 4.3 READ — Consultar lote
+
+Execute:
 
 ```text
-GET /api/v1/public/rastreabilidade/external/erp-av3-lote-001
+GET /api/v1/public/lotes/<lotePublico>
 ```
 
-A resposta não deve conter CNPJ, dados pessoais, nomes de usuários internos, IDs internos do banco, código de barras interno, segredo/hash de API Key ou referências externas de outros parceiros.
+Esperado: HTTP `200`, com identificador público, referência externa do parceiro, status, ativação, versão, datas, nota fiscal, transportadora, observações e quantidade de equipamentos. Essa resposta é uma visão de gestão; não contém movimentações ou histórico detalhado.
 
-**Ponto pendente identificado na revisão do código atual:** a submissão grava `SUBMISSAO_PUBLICA_LOTE`, mas a lista de ações usada para compor `historicoOperacional` não inclui esse evento. Até essa correção, o evento inicial da submissão pode não aparecer no array de histórico; não marque esse detalhe específico como aprovado.
+### 4.4 UPDATE — Alterar campos permitidos
 
-### F. Verificar idempotência
-
-Use novamente o mesmo `POST /api/v1/public/lotes` com o mesmo `Idempotency-Key` e o mesmo conteúdo. Esperado: a resposta aponta para o mesmo `identificadorPublico`; não deve ser criado um segundo lote.
-
-Depois, altere um campo do corpo e reutilize a mesma `Idempotency-Key`. Esperado: HTTP `409 Conflict`.
-
-Para testar `externalId`, envie o mesmo conteúdo e mesmo `externalId`, mas com uma nova `Idempotency-Key`. Esperado: o mesmo identificador público original. Reutilize o `externalId` com conteúdo diferente: esperado `409 Conflict`.
-
-### G. Verificar permissões e revogação
-
-Crie uma segunda API Key para o mesmo parceiro com escopo somente `lotes:write`:
+Execute `PATCH /api/v1/public/lotes/{identificadorPublico}`:
 
 ```json
 {
-  "nome": "Chave somente escrita",
-  "escopos": ["lotes:write"]
+  "versaoEsperada": 1,
+  "notaFiscal": "NF-AV3-001-RETIFICADA",
+  "observacoes": "Nota fiscal corrigida antes do início da triagem"
 }
 ```
 
-Use essa chave para consultar rastreabilidade. Esperado: HTTP `403`, pois falta `rastreabilidade:read`.
+Esperado: HTTP `200` e versão incrementada para 2. Os únicos campos editáveis são `notaFiscal`, `transportadora` e `observacoes`. O parceiro não pode alterar organização, identificadores, referências externas, estados internos, movimentações ou operadores. A edição só é permitida para lote ativo em `RECEBIDO`, sem triagem ou movimentação iniciada.
 
-Revogue a chave principal com `POST /api/v1/parceiros/{parceiroId}/chaves/{apiKeyId}/revogacao` e tente consultar novamente com ela. Esperado: HTTP `401`. Uma outra chave ativa do mesmo parceiro não deve ser revogada automaticamente.
+Para demonstrar concorrência otimista, repita a atualização usando `versaoEsperada` antiga. Esperado: HTTP `409`. Consulte novamente o lote para obter a versão vigente antes de uma nova alteração.
 
-### H. Testar isolamento entre parceiros
+### 4.5 DELETE — Cancelar logicamente
 
-Crie um segundo parceiro e uma API Key com `rastreabilidade:read`, mas não associe a organização do lote ao segundo parceiro. Tente consultar o `<identificadorPublico>` criado pelo primeiro parceiro. Esperado: HTTP `404`, sem revelar a existência do recurso de terceiro.
+O cancelamento é uma operação `DELETE`, mas não apaga fisicamente dados. Execute com a versão atual:
 
-## 4. Lista de rotas por função
-
-| Área | Rotas principais | Autorização |
-|---|---|---|
-| Saúde/documentação | `GET /health`, `GET /docs/`, `GET /docs/json` | Público |
-| Sessão interna | `POST /api/v1/auth/login`; `GET /api/v1/auth/me`; `POST /api/v1/auth/logout`; `POST /api/v1/auth/change-password` | Login público; demais com JWT |
-| Usuários | `GET/POST /api/v1/usuarios`; `GET/PATCH /api/v1/usuarios/{usuarioId}` e ações de ciclo de vida | JWT/RBAC |
-| Organizações | `GET/POST /api/v1/organizacoes`; `GET/PATCH /api/v1/organizacoes/{organizacaoId}` e ações de ciclo de vida | JWT/RBAC |
-| Contratos | `/api/v1/contratos` e rotas aninhadas em `/api/v1/organizacoes/{organizacaoId}/contratos` | JWT/RBAC |
-| Lotes | `/api/v1/lotes`, `/api/v1/lotes/{loteId}` e ações operacionais | JWT/RBAC |
-| Equipamentos | `/api/v1/equipamentos`, `/api/v1/equipamentos/{equipamentoId}` e movimentações | JWT/RBAC |
-| Auditoria/relatórios | `/api/v1/auditorias`, `/api/v1/relatorios/...` | JWT/RBAC conforme papel |
-| Parceiros | `GET/POST /api/v1/parceiros`; `GET/PATCH /api/v1/parceiros/{parceiroId}`; `/ativacao`, `/desativacao`; `/organizacoes` | JWT `ADMINISTRADOR` |
-| API Keys | `/api/v1/parceiros/{parceiroId}/chaves` e ações de atualização/revogação | JWT `ADMINISTRADOR` |
-| Submissão pública | `POST /api/v1/public/lotes` | API Key + `lotes:write` + headers de integração |
-| Rastreabilidade pública | `GET /api/v1/public/rastreabilidade/lotes/{identificadorPublico}`; `GET /api/v1/public/rastreabilidade/external/{externalId}` | API Key + `rastreabilidade:read` + vínculo ativo |
-
-O Swagger apresenta todos os schemas, parâmetros e códigos de resposta das rotas atualmente registradas.
-
-## 5. Testes negativos que demonstram as regras
-
-| Cenário | Resultado esperado |
-|---|---|
-| Rota interna protegida sem JWT ou com JWT inválido/revogado | `401` |
-| Usuário autenticado sem papel Administrador tenta gerir parceiro/chave | `403` |
-| Rota pública sem API Key, chave inválida, expirada ou revogada | `401` |
-| Chave sem o escopo necessário | `403` |
-| Parceiro desativado | `401` nas operações públicas |
-| `X-Integration-ID` ausente ou inválido na submissão | `400` |
-| Vínculo parceiro-organização revogado | Operação pública bloqueada; consulta não revela o recurso |
-| Mesmo `Idempotency-Key` com conteúdo diferente | `409` |
-| Mesmo `externalId` com conteúdo diferente | `409` |
-| Excesso de requisições | `429` com `Retry-After` |
-| Payload acima do limite | `413` |
-| Tipo de equipamento ou estado inválido | `400` |
-| Parceiro diferente tenta consultar lote sem vínculo | `404` |
-
-As respostas de erro utilizam JSON no campo `error`, com código, mensagem e request ID quando disponível. Confira também se a resposta não revela credenciais, SQL, IDs internos ou dados de terceiros.
-
-## 6. Testes automatizados e validação
-
-### 6.1 Testes unitários e HTTP
-
-```shell
-docker compose --profile tests run --rm --no-deps test-runner npm test
+```http
+DELETE /api/v1/public/lotes/<lotePublico>
+Content-Type: application/json
 ```
 
-O comando executa `npm test`, que primeiro roda `npm run build` e depois `node --test dist/src/tests/*.test.js`. O parâmetro `--no-deps` evita iniciar o PostgreSQL de integração, não necessário para esta suíte.
-
-### 6.2 Testes de integração com PostgreSQL
-
-```shell
-docker compose --profile tests run --rm test-runner
+```json
+{
+  "versaoEsperada": 2
+}
 ```
 
-O serviço `postgres-test` usa banco isolado `greencode_test`. O `test-runner` aplica migrations, executa o seed e chama `npm run test:integration`, que compila o projeto e roda `dist/src/tests/integration/*.integration.test.js`.
+Esperado: HTTP `200`, `ativo: false`, status público `CANCELADO` e versão incrementada. O registro, equipamentos e histórico são preservados. Um lote que já iniciou triagem ou movimentação não pode ser cancelado pelo parceiro; o resultado esperado nesse caso é HTTP `409`. Repetir a mesma operação depois de o cancelamento ter sido concluído retorna o estado cancelado sem excluir o recurso novamente.
 
-Os testes de integração verificam o nome da base e recusam uma URL que não contenha `test` no nome. Não altere `DATABASE_URL` para apontar ao banco principal ou a um ambiente de produção.
+## 5. Rastreabilidade, idempotência e autorização
 
-### 6.3 Validação Prisma, migrations e build na API
+### Rastreabilidade
 
-A imagem da API já foi construída com Node 24 e o comando de inicialização aplica migrations e seed. Para executar verificações manualmente dentro do container:
-
-```shell
-docker compose exec api npm run prisma:validate
-docker compose exec api npm run prisma:generate
-docker compose exec api npm run db:deploy
-```
-
-A migration em banco limpo deve ser verificada também usando um ambiente descartável. Não teste migrations destrutivas sobre uma base com dados que precisam ser preservados.
-
-### 6.4 Execução diretamente na máquina (opcional)
-
-Se não utilizar Docker, instale Node.js 24.x, PostgreSQL 17 e Redis 7. Crie um banco dedicado para a aplicação e configure `DATABASE_URL` no `.env`, por exemplo:
+Com escopo `rastreabilidade:read`, execute:
 
 ```text
-DATABASE_URL=postgresql://greencode:SENHA_LOCAL@127.0.0.1:5433/greencode?schema=public
+GET /api/v1/public/rastreabilidade/lotes/<lotePublico>
+GET /api/v1/public/rastreabilidade/external/erp-av3-lote-001
 ```
 
-Na raiz do projeto:
+A resposta detalhada contém `historicoOperacional`, equipamentos e movimentações permitidas. Não deve expor CNPJ, IDs internos de usuário/organização, códigos de barras internos, hashes ou segredos de API Key. A API verifica também a propriedade do lote pelo parceiro; conhecer o identificador público de outro parceiro não concede acesso.
 
-```shell
-npm ci
-npm run prisma:validate
-npm run prisma:generate
-npm run db:deploy
-npm run db:seed
-npm run dev
+### Idempotência
+
+Repita `POST /api/v1/public/lotes` com o mesmo conteúdo e o mesmo `Idempotency-Key`. Esperado: o mesmo lote original, sem duplicação. Reutilize a chave com conteúdo diferente. Esperado: HTTP `409`. O mesmo princípio de unicidade por parceiro se aplica a `externalId`.
+
+### Escopos e revogação
+
+Crie uma API Key adicional com escopo somente `lotes:write` e tente executar `GET /api/v1/public/lotes`. Esperado: HTTP `403`, por ausência de `lotes:read`. Escopos efetivos são a interseção das permissões do parceiro e da chave.
+
+Para revogar uma chave, execute `POST /api/v1/parceiros/{parceiroId}/chaves/{apiKeyId}/revogacao` com JWT de administrador. Chamadas subsequentes usando aquela chave devem responder `401`; outras chaves ativas não são revogadas automaticamente. Para revogar a associação organizacional, use `DELETE /api/v1/parceiros/{parceiroId}/organizacoes/{associacaoId}`. O identificador de integração deixa de autorizar novas operações.
+
+### Isolamento entre parceiros
+
+Cadastre um segundo parceiro com `lotes:read` e `rastreabilidade:read`, vincule-o à mesma organização e gere uma chave própria. Tente consultar o lote criado pelo primeiro parceiro. Esperado: HTTP `404`. O vínculo à mesma organização não transfere propriedade de recursos submetidos por outro parceiro.
+
+## 6. Demonstrar relatórios assíncronos
+
+Com uma chave que possua `reports:read` e `reports:write`, execute `POST /api/v1/public/relatorios` com `X-API-Key` e `X-Integration-ID`:
+
+```json
+{
+  "tipo": "equipamentos",
+  "formato": "JSON"
+}
 ```
 
-Para executar os testes unitários/HTTP:
+Os tipos disponíveis são `operacional`, `equipamentos`, `triagem`, `rentabilidade` e `vida-util`; os formatos são `CSV` e `JSON`. A organização vem do vínculo ativo, não de um UUID no body. Esperado: HTTP `202 Accepted`, com ID da tarefa e estado inicial `PENDING`.
 
-```shell
-npm test
+A solicitação e o evento Outbox são persistidos na mesma transação. O worker publica o job no Redis/BullMQ, processa o conteúdo e grava o arquivo. Consulte o estado com:
+
+```text
+GET /api/v1/public/relatorios/<reportId>
 ```
 
-Para integração, crie outro banco exclusivo cujo nome contenha `test`, configure temporariamente `DATABASE_URL` para ele e execute:
+Repita até o estado `COMPLETED`; enquanto estiver `PENDING` ou `PROCESSING`, o arquivo ainda não está pronto. Baixe com:
 
-```shell
-npm run test:integration
+```text
+GET /api/v1/public/relatorios/<reportId>/download
 ```
 
-Não aponte a suíte de integração para o banco principal. Os testes verificam o nome do banco como proteção adicional.
+A rota verifica o checksum SHA-256 antes de transmitir o arquivo. Um relatório não concluído não deve ser tratado como disponível para download. O serviço interno também oferece `POST /api/v1/relatorios/async` e rotas administrativas de consulta, reprocessamento e download para `ADMINISTRADOR` e `AUDITOR`.
 
-### 6.5 Resultados e evidências
+## 7. Rotas principais por função
 
-Nesta cópia, não há uma execução completa da suíte aprovada. Consulte a seção 6.7 e `docs/evidencias-testes-av3.md` para os comandos tentados, bloqueios observados e verificações estáticas que foram possíveis. Registre a data, o comando completo, o número de testes aprovados/falhos e qualquer erro após executar no ambiente Node.js 24. Não marque uma etapa como aprovada se o comando não chegou a executar os testes.
+| Área | Rotas | Acesso |
+|---|---|---|
+| Saúde e documentação | `GET /health`, `/docs/`, `/docs/json` | Público |
+| Autenticação interna | `POST /api/v1/auth/login` e rotas de sessão | JWT conforme rota |
+| Parceiros | `/api/v1/parceiros` e subrotas `organizacoes` e `chaves` | JWT `ADMINISTRADOR` |
+| Lotes internos | `/api/v1/lotes` e subrotas | JWT/RBAC |
+| Equipamentos | `/api/v1/equipamentos` e subrotas | JWT/RBAC |
+| API pública de lotes | `/api/v1/public/lotes` | API Key + escopo correspondente |
+| Rastreabilidade pública | `/api/v1/public/rastreabilidade/...` | API Key + `rastreabilidade:read` |
+| Relatórios públicos | `/api/v1/public/relatorios` | API Key + `reports:read`/`reports:write` |
+| Relatórios internos | `/api/v1/relatorios/async` | JWT `ADMINISTRADOR` ou `AUDITOR` |
 
+O Swagger é a referência para schemas, headers, query parameters, exemplos e códigos HTTP de cada operação.
 
+## 8. Testes negativos recomendados
 
-### 6.6 Demonstração detalhada de entradas e saídas
+| Situação | Resultado esperado |
+|---|---|
+| JWT ou API Key ausente/inválido/revogado | `401` |
+| Usuário sem papel administrativo gerencia parceiro | `403` |
+| Chave sem escopo necessário | `403` |
+| Parceiro consulta lote de outro parceiro, mesmo na mesma organização | `404` |
+| Referência externa ou Idempotency-Key reutilizada com conteúdo divergente | `409` |
+| Versão esperada antiga em PATCH/DELETE | `409` |
+| Lote com triagem iniciada submetido a cancelamento | `409` |
+| Limite de requisições excedido | `429` com `Retry-After` |
+| Payload acima do limite contratado | `413` |
+| Campos não permitidos no PATCH | `400` |
 
-O comando abaixo executa cenários controlados com asserts e apresenta no terminal a entrada, resultado esperado, resultado obtido e status individual. O relatório Markdown é atualizado no final da execução:
+## 9. Testes automatizados
 
-```shell
+### Unitários
+
+```bash
+npm run test:unit
+```
+
+O comando gera o Prisma Client, compila TypeScript e executa os arquivos `dist/src/tests/*.test.js`. Inclui cálculos analíticos, validações e fluxos controlados por doubles.
+
+### Demonstração com entradas e saídas
+
+```bash
 npm run test:demonstracao
 ```
 
-Arquivo gerado: `docs/evidencias-testes-av3.md`.
+O mecanismo apresenta por cenário identificação, tipo de teste, dependências, entrada, resultado esperado, resultado obtido, validações, duração e status. Atualiza `docs/evidencias-testes-av3.md`, preservando execuções anteriores. Valores sensíveis são redigidos antes de irem ao terminal ou arquivo.
 
-A demonstração cobre as operações de domínio para eficiência, rentabilidade, regressão de vida útil e serialização CSV, além de requisições Fastify para rotas públicas, relatórios e endpoints de saúde/OpenAPI. No cenário de API Key, a rota e o `createApiKeyAuthenticator` de produção são executados; uma chave efêmera é gerada e seu formato/hash é validado pelo código real. O registro retornado pelo Prisma, o controller e o rate limiter são doubles determinísticos, portanto esse cenário não comprova persistência PostgreSQL, revogação consultada no banco nem rate limiting concorrente entre instâncias. Os cenários assíncronos também simulam o cliente Prisma; o processamento/arquivo local é executado pelo serviço, mas não publica em Redis/BullMQ nem inicializa o worker real. Consulte a seção 6.7 e o próprio relatório de evidências para distinguir cada natureza de execução.
+A demonstração HTTP utiliza as rotas Fastify reais, mas controladores, repositórios ou rate limiter podem ser doubles. Cada cenário indica suas dependências; isso não deve ser descrito como teste PostgreSQL/Redis real.
 
-### 6.7 Estado de execução desta entrega
+### Integração com PostgreSQL e Redis
 
-A última execução do GitHub Actions informada antes da correção ocorreu em Node.js 24: build TypeScript e Prisma Generate concluíram; 63 de 64 testes unitários passaram. O teste reprovado foi identificado como uma fixture legada com conclusão anterior à entrada do lote. A fixture foi corrigida sem alterar a regra do serviço ou enfraquecer asserts. Esta cópia de trabalho continua sem uma nova execução verificável: o ambiente local disponibiliza Node.js 22.16.0 (o projeto exige Node.js 24), sem dependências instaladas e sem Docker. A nova execução do CI deve confirmar o resultado após a correção; não trate o resultado anterior de 63/1 como resultado posterior à mudança. Consulte `docs/evidencias-testes-av3.md` para a separação do histórico e dos resultados.
+A suíte de integração exige Node.js 24, PostgreSQL 17 e Redis 7. Configure `DATABASE_URL` para um banco dedicado com `test` no nome e `REDIS_URL` para Redis isolado. O teste de relatórios confirma também `current_database()` antes de criar dados e recusa bases que não pareçam ser de teste.
 
-## 7. Como registrar a avaliação
+Com Docker Compose:
 
-Ao concluir, registre:
+```bash
+docker compose --profile tests up -d postgres-test redis-test
+docker compose --profile tests run --rm test-runner
+```
 
-- Sistema operacional e versão.
-- Versão do Docker/Compose ou Node/PostgreSQL utilizados.
-- Resultado de `docker compose config -q` e `docker compose ps`.
-- Resposta de `GET /health`.
-- Resultado de `npm test`.
-- Resultado de `npm run test:integration`.
-- Resultado de `prisma:validate`, geração do client e migrations.
-- Testes manuais executados no Swagger, incluindo os cenários negativos.
-- Problemas conhecidos que permaneceram sem correção.
+O serviço `test-runner` aplica migrations e seed no banco `greencode_test` e executa `npm run test:integration`. Para rodar apenas integração a partir de um ambiente já preparado, use `npm run test:integration`.
 
-Uma execução bem-sucedida demonstra apenas os cenários executados naquele ambiente. Não representa homologação automática de todas as User Stories.
+### Pipeline completo local
+
+```bash
+npm run test:av3
+```
+
+O comando executa validação do Prisma, um build, a suíte unitária, a demonstração e a suíte de integração em sequência. A integração ainda precisa dos serviços e variáveis dedicados.
+
+## 10. CI e registro dos resultados
+
+O workflow `.github/workflows/ci.yml` usa Node.js 24, PostgreSQL 17 e Redis 7 como serviços do job. Ele valida o Prisma, aplica migrations e seed uma vez, constrói o projeto, executa unitários e demonstração, roda os testes de integração e publica `docs/evidencias-testes-av3.md` como artifact do GitHub Actions.
+
+Uma execução local ou no CI comprova somente os comandos que chegaram a executar e os cenários que reportaram resultado. Um serviço indisponível ou teste bloqueado deve ser registrado como bloqueado/não executado, nunca como aprovado.
+
+## 11. Encerrar o ambiente
+
+Para parar sem remover dados:
+
+```bash
+docker compose down
+```
+
+Para descartar os volumes locais e iniciar a aplicação limpa:
+
+```bash
+docker compose down -v
+docker compose up --build -d
+```
+
+`down -v` apaga os volumes de dados do projeto Compose. Só execute quando os dados existentes puderem ser descartados.

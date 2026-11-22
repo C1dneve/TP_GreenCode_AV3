@@ -1,7 +1,6 @@
 import { AnalyticsRepository, type AnalyticsFilters, type AnalyticsLifeEquipmentRecord } from "./analytics.repository.js";
 import { linearRegression, median, round } from "./statistics.js";
 
-const STATE_SCORE: Record<string, number> = { NOVO: 1, BOM_ESTADO: .9, USADO_LEVE: .78, USADO_MODERADO: .62, DANIFICADO_LEVE: .4, DANIFICADO_GRAVE: .2, INSERVIVEL: 0 };
 type RegressionPoint = [number, number];
 
 export interface LifePrediction {
@@ -12,6 +11,9 @@ export interface LifePrediction {
   idadeAnos: number;
   estadoFisico: string;
   falhasObservadas: number;
+  falhasNaoResolvidas: number;
+  falhasPorSeveridade: Array<{ severidade: string; quantidade: number }>;
+  intervaloMedioEntreFalhasDias: number | null;
   manutencoesObservadas: number;
   observacoes: number;
   mesesRemanescentesEstimados: number | null;
@@ -79,9 +81,24 @@ export class UsefulLifeService {
       const points = sourcePoints;
 
       const regression = linearRegression(points);
-      const failures = item.falhas.length;
+      const failureHistory = [...item.falhas]
+        .filter((failure) => failure.ocorridoEm <= now)
+        .sort((a, b) => a.ocorridoEm.getTime() - b.ocorridoEm.getTime());
+      const failures = failureHistory.length;
+      const unresolvedFailures = failureHistory.filter((failure) => failure.resolvidaEm === null).length;
+      const severityCounts = [...failureHistory.reduce((counts, failure) => {
+        counts.set(failure.severidade, (counts.get(failure.severidade) ?? 0) + 1);
+        return counts;
+      }, new Map<string, number>())]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([severidade, quantidade]) => ({ severidade, quantidade }));
+      const failureIntervals = failureHistory.slice(1).map((failure, index) =>
+        (failure.ocorridoEm.getTime() - failureHistory[index]!.ocorridoEm.getTime()) / 86_400_000,
+      );
+      const meanFailureInterval = failureIntervals.length
+        ? round(failureIntervals.reduce((sum, interval) => sum + interval, 0) / failureIntervals.length, 1)
+        : null;
       const maintenances = item.manutencoes.length;
-      const stateScore = STATE_SCORE[item.estadoFisico] ?? 0;
       let remainingMonths: number | null = null;
       let unavailableReason: string | null = null;
       const distinctObservations = new Set<number>(points.map(([age]: RegressionPoint) => age)).size;
@@ -95,9 +112,7 @@ export class UsefulLifeService {
         if (!Number.isFinite(zeroAge) || zeroAge <= lastAge) unavailableReason = "O modelo indica que o limite de depreciação já teria sido atingido; não há horizonte futuro confiável.";
         else remainingMonths = zeroAge - lastAge;
       }
-      const penalty = Math.min(.5, failures * .06);
-      const maintenanceCredit = Math.min(.15, maintenances * .02);
-      const adjustedMonths = remainingMonths === null ? null : round(Math.max(0, remainingMonths * (1 - penalty + maintenanceCredit)), 1);
+      const adjustedMonths = remainingMonths === null ? null : round(Math.max(0, remainingMonths), 1);
       return {
         equipamentoId: item.id,
         tipo: item.tipo,
@@ -106,14 +121,17 @@ export class UsefulLifeService {
         idadeAnos: Math.max(0, new Date().getUTCFullYear() - item.anoFabricacao),
         estadoFisico: item.estadoFisico,
         falhasObservadas: failures,
+        falhasNaoResolvidas: unresolvedFailures,
+        falhasPorSeveridade: severityCounts,
+        intervaloMedioEntreFalhasDias: meanFailureInterval,
         manutencoesObservadas: maintenances,
         observacoes: points.length,
         mesesRemanescentesEstimados: adjustedMonths,
         dataEstimadaInservivel: adjustedMonths === null ? null : new Date(Date.now() + adjustedMonths * 30.4375 * 86400000).toISOString(),
         tendenciaValorPorMes: regression ? round(regression.slope, 4) : null,
         rSquared: regression ? round(regression.rSquared, 4) : null,
-        confiabilidade: regression && adjustedMonths !== null ? round(regression.rSquared * stateScore * Math.max(.35, 1 - penalty + maintenanceCredit), 4) : null,
-        metodo: "Regressão linear OLS sobre valor estimado de depreciação x idade em meses, ajustada por condição física, falhas e manutenções",
+        confiabilidade: regression && adjustedMonths !== null ? round(regression.rSquared, 4) : null,
+        metodo: "Regressão linear OLS sobre valor estimado de depreciação x idade em meses; falhas e manutenções são indicadores históricos, sem peso preditivo não calibrado",
         indisponivel: adjustedMonths === null,
         motivoIndisponibilidade: unavailableReason,
       };
@@ -178,13 +196,13 @@ export class UsefulLifeService {
       confiabilidadeMedia: valid.length ? round(valid.reduce((sum: number, item: AvailableLifePrediction) => sum + item.confiabilidade, 0) / valid.length, 4) : null,
       previsoesPorTipo: typeSummaries,
       previsoes: predictions,
-      limitacao: "Previsões dependem de avaliações válidas e não futuras. Exige no mínimo três observações em datas distintas, tendência negativa e R² mínimo de 0,35; equipamento já INSERVIVEL ou projeção cujo limite tenha sido ultrapassado não recebe previsão futura. O modelo mantém a penalização original por quantidade de falhas (0,06 por falha, limitada a 0,5). O histórico também contém data, categoria, severidade e data de resolução; a consolidação apresenta contagens por categoria/severidade, falhas não resolvidas e data da última falha como contexto, mas esses atributos não alteram a previsão nem introduzem pesos não validados. O resultado é estimativo, não uma garantia de falha.",
+      limitacao: "Previsões dependem de avaliações válidas e não futuras. Exige no mínimo três observações em datas distintas, tendência negativa e R² mínimo de 0,35; equipamento já INSERVIVEL ou projeção cujo limite tenha sido ultrapassado não recebe previsão futura. Falhas (datas, severidade, categoria, resolução e intervalo médio entre ocorrências) e manutenções são apresentadas como indicadores descritivos; não alteram os meses estimados porque o conjunto disponível não fornece uma relação histórica validada entre esses eventos e a vida útil. R² representa a qualidade do ajuste linear, não uma probabilidade de sobrevivência. O resultado é estimativo, não uma garantia de duração real.",
     };
     await this.repo.saveRun({
       tipo: "VIDA_UTIL_REMANESCENTE",
       organizacaoId: filters.organizacaoId ?? null,
-      metodo: "Regressão linear OLS + ajuste por estado, quantidade de falhas e manutenção; severidade e resolução são reportadas como contexto sem alterar os pesos",
-      versaoModelo: "1.1.0",
+      metodo: "Regressão linear OLS; falhas e manutenções são indicadores descritivos sem ponderação preditiva não calibrada",
+      versaoModelo: "1.2.0",
       filtros: { ...filters },
       resultado: result,
       observacoes: valid.length,

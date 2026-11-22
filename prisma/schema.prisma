@@ -351,6 +351,7 @@ model RequisicaoIdempotencia {
 
   @@unique([parceiroId, chave])
   @@index([loteId])
+  @@index([parceiroId, loteId])
   @@map("requisicoes_idempotencia")
 }
 

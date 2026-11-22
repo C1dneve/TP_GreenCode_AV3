@@ -178,11 +178,11 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
 
   const organizationA = await createOrganization(token, "Organização Parceiro A");
   const organizationB = await createOrganization(token, "Organização Parceiro B");
-  const partnerA = await createPartner(token, "Parceiro A", { limiteRequisicoesPorMinuto: 20, maxEquipamentosPorSubmissao: 3 });
+  const partnerA = await createPartner(token, "Parceiro A", { limiteRequisicoesPorMinuto: 20, maxEquipamentosPorSubmissao: 3 }, ["lotes:read", "lotes:write", "rastreabilidade:read"]);
   const partnerB = await createPartner(token, "Parceiro B");
 
-  // Exercita os seis escopos ponta a ponta em cadastro e atualização.
-  const allScopesPartner = await createPartner(token, "Parceiro seis escopos", {}, INTEGRATION_SCOPES);
+  // Exercita os sete escopos ponta a ponta em cadastro e atualização.
+  const allScopesPartner = await createPartner(token, "Parceiro sete escopos", {}, INTEGRATION_SCOPES);
   assert.deepEqual([...allScopesPartner.escopos].sort(), [...INTEGRATION_SCOPES].sort());
   const allScopesPartnerUpdate = await app.inject({
     method: "PATCH", url: `/api/v1/parceiros/${allScopesPartner.id}`, headers: adminHeaders(token),
@@ -190,7 +190,7 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
   });
   assert.equal(allScopesPartnerUpdate.statusCode, 200, allScopesPartnerUpdate.body);
   assert.deepEqual([...allScopesPartnerUpdate.json().escopos].sort(), [...INTEGRATION_SCOPES].sort());
-  const allScopesKey = await createKey(token, allScopesPartner.id, "API Key seis escopos", [...INTEGRATION_SCOPES]);
+  const allScopesKey = await createKey(token, allScopesPartner.id, "API Key sete escopos", [...INTEGRATION_SCOPES]);
   const allScopesKeyUpdate = await app.inject({
     method: "PATCH", url: `/api/v1/parceiros/${allScopesPartner.id}/chaves/${allScopesKey.id}`, headers: adminHeaders(token),
     payload: { escopos: [...INTEGRATION_SCOPES] },
@@ -201,6 +201,7 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
   assert.equal(partnerDetails.statusCode, 200, partnerDetails.body);
   const defaultPartnerDetails = await app.inject({ method: "GET", url: `/api/v1/parceiros/${partnerB.id}`, headers: adminHeaders(token) });
   assert.equal(defaultPartnerDetails.statusCode, 200, defaultPartnerDetails.body);
+  assert.equal(defaultPartnerDetails.json().escopos.includes("lotes:read"), false, "lotes:read não é concedido automaticamente a parceiros existentes ou recém-criados com o conjunto padrão.");
   assert.equal(defaultPartnerDetails.json().limiteRequisicoesPorMinuto, 60);
   assert.equal(defaultPartnerDetails.json().maxEquipamentosPorSubmissao, 100);
   assert.equal(defaultPartnerDetails.json().maxPayloadBytes, 1_048_576);
@@ -215,9 +216,13 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
   assert.equal(associationList.statusCode, 200, associationList.body);
   assert.equal(associationList.json()[0].identificadorPublico, associationA.identificadorPublico);
   const associationB = await associate(token, partnerB.id, organizationB.id);
+  // O segundo parceiro também recebe vínculo à organização A: conhecer o mesmo tenant
+  // não deve permitir acesso aos lotes criados pela integração do parceiro A.
+  const associationBShared = await associate(token, partnerB.id, organizationA.id);
 
   const writeKey = await createKey(token, partnerA.id, "somente escrita", ["lotes:write"]);
-  const readKey = await createKey(token, partnerA.id, "somente leitura", ["rastreabilidade:read"]);
+  const lotReadKey = await createKey(token, partnerA.id, "consulta de lotes", ["lotes:read"]);
+  const readKey = await createKey(token, partnerA.id, "somente rastreabilidade", ["rastreabilidade:read"]);
   const anotherReadKey = await createKey(token, partnerA.id, "segunda chave de leitura", ["rastreabilidade:read"]);
   const overScopedKey = await createKey(token, partnerA.id, "escopo maior que parceiro", ["lotes:write", "rastreabilidade:read"]);
   const expiringKey = await createKey(token, partnerA.id, "chave expirada", ["rastreabilidade:read"]);
@@ -226,7 +231,12 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
   assert.equal(expiredAuth.statusCode, 401, expiredAuth.body);
   const invalidAuth = await app.inject({ method: "GET", url: "/api/v1/public/rastreabilidade/lotes/nao-existe", headers: publicHeaders(`${writeKey.secret}x`) });
   assert.equal(invalidAuth.statusCode, 401, invalidAuth.body);
-  const partnerBKey = await createKey(token, partnerB.id, "leitura parceiro B", ["rastreabilidade:read"]);
+  const grantPartnerBLotRead = await app.inject({
+    method: "PATCH", url: `/api/v1/parceiros/${partnerB.id}`, headers: adminHeaders(token),
+    payload: { escopos: ["lotes:read", "lotes:write", "rastreabilidade:read"] },
+  });
+  assert.equal(grantPartnerBLotRead.statusCode, 200, grantPartnerBLotRead.body);
+  const partnerBKey = await createKey(token, partnerB.id, "leitura parceiro B", ["lotes:read", "rastreabilidade:read"]);
   const partnerBWriteKey = await createKey(token, partnerB.id, "escrita parceiro B", ["lotes:write"]);
 
   const stored = await prisma.apiKey.findUnique({ where: { id: writeKey.id } });
@@ -283,6 +293,51 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
   assert.equal(first.json().status, "RECEBIDO");
   lotIds.push((await prisma.lote.findUnique({ where: { publicId }, select: { id: true } }))!.id);
 
+  const noReadScope = await app.inject({ method: "GET", url: `/api/v1/public/lotes/${publicId}`, headers: publicHeaders(writeKey.secret) });
+  assert.equal(noReadScope.statusCode, 403, noReadScope.body);
+  const ownLot = await app.inject({ method: "GET", url: `/api/v1/public/lotes/${publicId}`, headers: publicHeaders(lotReadKey.secret) });
+  assert.equal(ownLot.statusCode, 200, ownLot.body);
+  assert.equal(ownLot.json().identificadorPublico, publicId);
+  assert.equal(ownLot.json().notaFiscal, body.notaFiscal);
+  assert.equal(ownLot.json().versao, 1);
+  assert.doesNotMatch(ownLot.body, /organizacaoId|parceiroId|codigoBarrasInterno|segredoHash/);
+  const lotPage = await app.inject({ method: "GET", url: "/api/v1/public/lotes?page=1&pageSize=1", headers: publicHeaders(lotReadKey.secret) });
+  assert.equal(lotPage.statusCode, 200, lotPage.body);
+  assert.equal(lotPage.json().meta.page, 1);
+  assert.equal(lotPage.json().meta.pageSize, 1);
+  assert.ok(lotPage.json().meta.total >= 1);
+  assert.equal(lotPage.json().data.length, 1);
+  const partnerBHeaders = publicHeaders(partnerBKey.secret, associationBShared.identificadorPublico);
+  const partnerBCrossRead = await app.inject({ method: "GET", url: `/api/v1/public/lotes/${publicId}`, headers: partnerBHeaders });
+  assert.equal(partnerBCrossRead.statusCode, 404, partnerBCrossRead.body);
+  const partnerBPage = await app.inject({ method: "GET", url: "/api/v1/public/lotes", headers: partnerBHeaders });
+  assert.equal(partnerBPage.statusCode, 200, partnerBPage.body);
+  assert.equal(partnerBPage.json().meta.total, 0, "A listagem não deve incluir lotes de outro parceiro vinculado à mesma organização.");
+  const partnerBCrossTracking = await app.inject({ method: "GET", url: `/api/v1/public/rastreabilidade/lotes/${publicId}`, headers: partnerBHeaders });
+  assert.equal(partnerBCrossTracking.statusCode, 404, partnerBCrossTracking.body);
+  const partnerBCrossUpdate = await app.inject({ method: "PATCH", url: `/api/v1/public/lotes/${publicId}`, headers: publicHeaders(partnerBWriteKey.secret, associationBShared.identificadorPublico), payload: { versaoEsperada: 1, observacoes: "Tentativa de alteração cruzada" } });
+  assert.equal(partnerBCrossUpdate.statusCode, 404, partnerBCrossUpdate.body);
+  const partnerBCrossCancel = await app.inject({ method: "DELETE", url: `/api/v1/public/lotes/${publicId}`, headers: publicHeaders(partnerBWriteKey.secret, associationBShared.identificadorPublico), payload: { versaoEsperada: 1 } });
+  assert.equal(partnerBCrossCancel.statusCode, 404, partnerBCrossCancel.body);
+
+  const updatedLot = await app.inject({
+    method: "PATCH", url: `/api/v1/public/lotes/${publicId}`, headers: publicHeaders(writeKey.secret),
+    payload: { versaoEsperada: 1, notaFiscal: `NF-EDITADA-${suffix}`, observacoes: "Atualizado pelo parceiro" },
+  });
+  assert.equal(updatedLot.statusCode, 200, updatedLot.body);
+  assert.equal(updatedLot.json().versao, 2);
+  assert.equal(updatedLot.json().notaFiscal, `NF-EDITADA-${suffix}`);
+  const staleUpdate = await app.inject({
+    method: "PATCH", url: `/api/v1/public/lotes/${publicId}`, headers: publicHeaders(writeKey.secret),
+    payload: { versaoEsperada: 1, transportadora: "Transportadora desatualizada" },
+  });
+  assert.equal(staleUpdate.statusCode, 409, staleUpdate.body);
+  const forbiddenFieldUpdate = await app.inject({
+    method: "PATCH", url: `/api/v1/public/lotes/${publicId}`, headers: publicHeaders(writeKey.secret),
+    payload: { versaoEsperada: 2, organizacaoId: organizationB.id },
+  });
+  assert.equal(forbiddenFieldUpdate.statusCode, 400, forbiddenFieldUpdate.body);
+
   const replay = await app.inject({
     method: "POST", url: "/api/v1/public/lotes", headers: publicHeaders(writeKey.secret, associationA.identificadorPublico, `idem-${suffix}`), payload: { transportadora: body.transportadora, notaFiscal: body.notaFiscal, externalId: body.externalId, observacoes: body.observacoes },
   });
@@ -325,7 +380,31 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
   assert.equal(withEquipment.json().quantidadeEquipamentos, 1);
   assert.equal(withEquipment.json().equipamentos[0].statusRastreamento, "AGUARDANDO_TRIAGEM");
   const equipmentPublicId = withEquipment.json().identificadorPublico as string;
-  lotIds.push((await prisma.lote.findUnique({ where: { publicId: equipmentPublicId }, select: { id: true } }))!.id);
+  const equipmentLotId = (await prisma.lote.findUnique({ where: { publicId: equipmentPublicId }, select: { id: true } }))!.id;
+  lotIds.push(equipmentLotId);
+  await prisma.equipamento.updateMany({ where: { loteId: equipmentLotId }, data: { statusRastreamento: "EM_TRIAGEM" } });
+  const blockedCancel = await app.inject({ method: "DELETE", url: `/api/v1/public/lotes/${equipmentPublicId}`, headers: publicHeaders(writeKey.secret), payload: { versaoEsperada: 1 } });
+  assert.equal(blockedCancel.statusCode, 409, blockedCancel.body, "Lote com equipamento que iniciou triagem não pode ser cancelado.");
+
+  const cancellable = await app.inject({
+    method: "POST", url: "/api/v1/public/lotes", headers: publicHeaders(writeKey.secret, associationA.identificadorPublico, `cancel-${suffix}`),
+    payload: { notaFiscal: `NF-CANCEL-${suffix}`, transportadora: "Transportadora cancelável" },
+  });
+  assert.equal(cancellable.statusCode, 201, cancellable.body);
+  const cancellableId = cancellable.json().identificadorPublico as string;
+  const cancellableDb = await prisma.lote.findUnique({ where: { publicId: cancellableId }, select: { id: true } });
+  assert.ok(cancellableDb);
+  lotIds.push(cancellableDb.id);
+  const cancelled = await app.inject({ method: "DELETE", url: `/api/v1/public/lotes/${cancellableId}`, headers: publicHeaders(writeKey.secret), payload: { versaoEsperada: 1 } });
+  assert.equal(cancelled.statusCode, 200, cancelled.body);
+  assert.equal(cancelled.json().status, "CANCELADO");
+  assert.equal(cancelled.json().ativo, false);
+  assert.equal(cancelled.json().versao, 2);
+  const cancelledPersisted = await prisma.lote.findUnique({ where: { id: cancellableDb.id }, select: { id: true, ativo: true, versao: true } });
+  assert.deepEqual(cancelledPersisted, { id: cancellableDb.id, ativo: false, versao: 2 }, "O cancelamento preserva o registro em vez de excluir fisicamente o lote.");
+  const repeatedCancel = await app.inject({ method: "DELETE", url: `/api/v1/public/lotes/${cancellableId}`, headers: publicHeaders(writeKey.secret), payload: { versaoEsperada: 1 } });
+  assert.equal(repeatedCancel.statusCode, 200, repeatedCancel.body);
+  assert.equal(repeatedCancel.json().versao, 2);
 
   const strictKey = await createKey(token, partnerA.id, "limites por chave", ["lotes:write"], { maxEquipamentosPorSubmissao: 0, maxPayloadBytes: 1024, limiteRequisicoesPorMinuto: 10 });
   const invalidEquipment = await app.inject({
@@ -357,8 +436,7 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
   assert.doesNotMatch(readByExternal.body, /codigoBarrasInterno|segredoHash|parceiroId|organizacaoId|atorNomeSnapshot/);
 
   const readByPublicId = await app.inject({ method: "GET", url: `/api/v1/public/rastreabilidade/lotes/${internalPublicId}`, headers: publicHeaders(readKey.secret) });
-  assert.equal(readByPublicId.statusCode, 200, readByPublicId.body);
-  assert.equal(readByPublicId.json().identificadorPublico, internalPublicId);
+  assert.equal(readByPublicId.statusCode, 404, readByPublicId.body, "Um parceiro não consulta lotes internos que não submeteu, mesmo com vínculo à organização.");
 
   const revokedKey = await app.inject({ method: "POST", url: `/api/v1/parceiros/${partnerA.id}/chaves/${readKey.id}/revogacao`, headers: adminHeaders(token) });
   assert.equal(revokedKey.statusCode, 200, revokedKey.body);
@@ -379,7 +457,7 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
   });
   assert.equal(writeScopeStillWorks.statusCode, 201, writeScopeStillWorks.body);
   lotIds.push((await prisma.lote.findUnique({ where: { publicId: writeScopeStillWorks.json().identificadorPublico }, select: { id: true } }))!.id);
-  const restorePartnerScopes = await app.inject({ method: "PATCH", url: `/api/v1/parceiros/${partnerA.id}`, headers: adminHeaders(token), payload: { escopos: ["lotes:write", "rastreabilidade:read"] } });
+  const restorePartnerScopes = await app.inject({ method: "PATCH", url: `/api/v1/parceiros/${partnerA.id}`, headers: adminHeaders(token), payload: { escopos: ["lotes:read", "lotes:write", "rastreabilidade:read"] } });
   assert.equal(restorePartnerScopes.statusCode, 200, restorePartnerScopes.body);
 
   const keyRateLimit = await createKey(token, partnerA.id, "limite de requisições por chave", ["lotes:write"], { limiteRequisicoesPorMinuto: 1 });
