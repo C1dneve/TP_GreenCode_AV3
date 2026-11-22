@@ -16,6 +16,34 @@ const EXPIRATION_DAYS = Math.max(1, Math.min(30, Number(process.env.REPORT_EXPIR
 const STORAGE_ROOT = resolve(process.env.REPORTS_DIR?.trim() || "./storage/reports");
 const REPORT_ROW_LIMIT = 20_000;
 
+/**
+ * JSON não representa bigint. Valores de tamanho são convertidos somente quando
+ * cabem com precisão inteira segura em Number; fora desse intervalo a resposta
+ * falha de forma explícita em vez de arredondar silenciosamente.
+ */
+function serializeReportByteSize(value: bigint | null): number | null {
+  if (value === null) return null;
+  const numeric = Number(value);
+  if (!Number.isSafeInteger(numeric) || numeric < 0 || BigInt(numeric) !== value) {
+    throw new RangeError("O tamanho persistido do relatório excede o intervalo inteiro seguro para JSON.");
+  }
+  return numeric;
+}
+
+function serializeReportStatus<T extends {
+  status: string;
+  expiraEm: Date;
+  arquivoPath: string | null;
+  tamanhoBytes: bigint | null;
+}>(report: T) {
+  const { arquivoPath, tamanhoBytes, ...publicFields } = report;
+  return {
+    ...publicFields,
+    tamanhoBytes: serializeReportByteSize(tamanhoBytes),
+    downloadDisponivel: report.status === "COMPLETED" && report.expiraEm > new Date() && Boolean(arquivoPath),
+  };
+}
+
 function validateRequest(input: any, organizationIdOverride?: string) {
   if (!input || !ALLOWED_TYPES.has(input.tipo)) throw errors.badRequest("INVALID_REPORT_TYPE", "Tipo de relatório inválido.");
   if (!(["CSV", "JSON"].includes(input.formato))) throw errors.badRequest("INVALID_REPORT_FORMAT", "Formato deve ser CSV ou JSON.");
@@ -92,14 +120,14 @@ export class RelatoriosAsyncService {
   async getInternal(id: string) {
     const report = await this.db.relatorioAssincrono.findUnique({ where: { id }, select: { id: true, tipo: true, formato: true, status: true, solicitanteUsuarioId: true, parceiroId: true, organizacaoId: true, criadoEm: true, iniciadoEm: true, concluidoEm: true, progresso: true, mensagemErro: true, arquivoPath: true, expiraEm: true, tamanhoBytes: true } });
     if (!report) throw errors.notFound("REPORT_NOT_FOUND", "Relatório não encontrado.");
-    return { ...report, downloadDisponivel: report.status === "COMPLETED" && report.expiraEm > new Date() && Boolean(report.arquivoPath), arquivoPath: undefined };
+    return serializeReportStatus(report);
   }
 
   async getPublic(id: string, identity: IntegrationIdentity) {
     if (!identity.escoposEfetivos.includes("reports:read")) throw errors.forbidden("A API Key não possui o escopo reports:read.");
     const report = await this.db.relatorioAssincrono.findFirst({ where: { id, parceiroId: identity.parceiroId, organizacao: { ativo: true, parceiros: { some: { parceiroId: identity.parceiroId, ativo: true } } } }, select: { id: true, tipo: true, formato: true, status: true, criadoEm: true, iniciadoEm: true, concluidoEm: true, progresso: true, mensagemErro: true, arquivoPath: true, expiraEm: true, tamanhoBytes: true } });
     if (!report) throw errors.notFound("REPORT_NOT_FOUND", "Relatório não encontrado.");
-    return { ...report, downloadDisponivel: report.status === "COMPLETED" && report.expiraEm > new Date() && Boolean(report.arquivoPath), arquivoPath: undefined };
+    return serializeReportStatus(report);
   }
 
   async download(id: string, actor: { usuarioId?: string; parceiroId?: string; apiKeyId?: string; escoposEfetivos?: string[] }, requestId: string) {

@@ -106,6 +106,58 @@ test("download CSV/JSON verifica escopo, vínculo e checksum antes de expor o ar
   }
 });
 
+
+test("status de relatório converte BigInt em número JSON seguro nos DTOs interno e público", async () => {
+  const reportId = randomUUID();
+  const report = {
+    id: reportId, tipo: "equipamentos", formato: "JSON", status: "COMPLETED",
+    solicitanteUsuarioId: null, parceiroId, organizacaoId,
+    criadoEm: new Date(), iniciadoEm: new Date(), concluidoEm: new Date(), progresso: 100,
+    mensagemErro: null, arquivoPath: "private-report.json",
+    expiraEm: new Date(Date.now() + 60_000), tamanhoBytes: 1234n,
+  };
+  const db: any = {
+    relatorioAssincrono: {
+      findUnique: async () => report,
+      findFirst: async () => report,
+    },
+  };
+  const service = new RelatoriosAsyncService(new RelatoriosAsyncRepository(db));
+
+  const internal = await service.getInternal(reportId);
+  const publicStatus = await service.getPublic(reportId, identity);
+  for (const result of [internal, publicStatus]) {
+    assert.equal(result.status, "COMPLETED");
+    assert.equal(result.downloadDisponivel, true);
+    assert.equal(result.tamanhoBytes, 1234);
+    assert.equal(typeof result.tamanhoBytes, "number");
+    assert.ok(Number.isSafeInteger(result.tamanhoBytes as number));
+    assert.equal("arquivoPath" in result, false);
+    assert.doesNotThrow(() => JSON.stringify(result));
+  }
+});
+
+test("status de relatório preserva tamanhoBytes nulo e rejeita BigInt sem precisão JSON segura", async () => {
+  const report = {
+    id: randomUUID(), tipo: "equipamentos", formato: "JSON", status: "PENDING",
+    solicitanteUsuarioId: null, parceiroId, organizacaoId,
+    criadoEm: new Date(), iniciadoEm: null, concluidoEm: null, progresso: 0,
+    mensagemErro: null, arquivoPath: null as string | null, expiraEm: new Date(Date.now() + 60_000), tamanhoBytes: null as bigint | null,
+  };
+  const db: any = { relatorioAssincrono: { findUnique: async () => report, findFirst: async () => report } };
+  const service = new RelatoriosAsyncService(new RelatoriosAsyncRepository(db));
+
+  const pending = await service.getInternal(report.id);
+  assert.equal(pending.tamanhoBytes, null);
+  assert.equal(pending.downloadDisponivel, false);
+
+  report.status = "COMPLETED";
+  report.arquivoPath = "private-report.json";
+  report.tamanhoBytes = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+  await assert.rejects(service.getInternal(report.id), RangeError);
+  await assert.rejects(service.getPublic(report.id, identity), RangeError);
+});
+
 test("processamento com falha registra FAILED para permitir retry do BullMQ", async () => {
   const reportId = randomUUID();
   const report = { id: reportId, status: "PENDING", expiraEm: new Date(Date.now() + 60_000), iniciadoEm: null, filtros: {}, organizacaoId: organizationId, formato: "JSON", tipo: "equipamentos" };

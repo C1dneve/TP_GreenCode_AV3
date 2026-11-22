@@ -100,7 +100,7 @@ Nunca aponte testes automatizados ao banco principal. A demonstração usa servi
 - [Guia do professor](docs/guia-de-testes-professor.md): inicialização, jornada de demonstração e comandos de validação.
 - [Decisões arquiteturais](docs/decisoes-arquiteturais.md): decisões, alternativas e histórico dos ADRs.
 - [Evidências de demonstração](docs/evidencias-testes-av3.md): preenchido pelo comando de demonstração após uma execução real.
-- [Inventário da entrega](docs/arquivos-entrega.md): consolidação e documentos removidos.
+- [Inventário da entrega](docs/inventario.md): estrutura do pacote e conteúdo regenerado ou excluído.
 
 ## Segurança operacional
 

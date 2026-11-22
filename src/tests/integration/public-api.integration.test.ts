@@ -178,7 +178,7 @@ test("API pública: parceiros, chaves, escopos, limites, idempotência, rastreab
 
   const organizationA = await createOrganization(token, "Organização Parceiro A");
   const organizationB = await createOrganization(token, "Organização Parceiro B");
-  const partnerA = await createPartner(token, "Parceiro A", { limiteRequisicoesPorMinuto: 20, maxEquipamentosPorSubmissao: 3 }, ["lotes:read", "lotes:write", "rastreabilidade:read"]);
+  const partnerA = await createPartner(token, "Parceiro A", { limiteRequisicoesPorMinuto: 300, maxEquipamentosPorSubmissao: 3 }, ["lotes:read", "lotes:write", "rastreabilidade:read"]);
   const partnerB = await createPartner(token, "Parceiro B");
 
   // Exercita os sete escopos ponta a ponta em cadastro e atualização.

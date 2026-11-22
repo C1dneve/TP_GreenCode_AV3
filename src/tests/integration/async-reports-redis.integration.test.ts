@@ -1,6 +1,7 @@
 import "dotenv/config";
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
+import bcrypt from "bcryptjs";
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,6 +28,8 @@ let organizationId: string | undefined;
 let partnerId: string | undefined;
 let associationId: string | undefined;
 let apiKeyId: string | undefined;
+let adminUserId: string | undefined;
+let adminAccessToken = "";
 let reportId: string | undefined;
 const reportIds: string[] = [];
 let generatedApiKey = "";
@@ -78,6 +81,14 @@ before(async () => {
   organizationId = randomUUID();
   partnerId = randomUUID();
   associationId = randomUUID();
+  adminUserId = randomUUID();
+  const adminUsername = `reports-integration-${suffix}`;
+  const adminPassword = `Reports-Integration-${randomUUID()}-Secure`;
+
+  await prisma.usuario.create({ data: {
+    id: adminUserId, usuario: adminUsername, nome: "Administrador integração relatórios",
+    senhaHash: await bcrypt.hash(adminPassword, 4), papel: "ADMINISTRADOR", ativo: true,
+  } });
   const generated = generateApiKey();
   const associationPublicId = `gci_${randomBytes(24).toString("base64url")}`;
   generatedApiKey = generated.valorCompleto;
@@ -118,6 +129,11 @@ before(async () => {
   ]);
   app = buildApp({ prisma, jwtSecret: "redis-report-integration-only-jwt-secret-32-bytes-minimum" });
   await app.ready();
+  const adminLogin = await app.inject({
+    method: "POST", url: "/api/v1/auth/login", payload: { usuario: adminUsername, senha: adminPassword },
+  });
+  assert.equal(adminLogin.statusCode, 200, adminLogin.body);
+  adminAccessToken = adminLogin.json().accessToken as string;
 
   queue = createReportQueue();
   await queue.waitUntilReady();
@@ -162,6 +178,10 @@ after(async () => {
         await prisma.relatorioAssincrono.deleteMany({ where: { id: { in: reportIds } } });
       }
       if (apiKeyId) await prisma.apiKey.deleteMany({ where: { id: apiKeyId } });
+      if (adminUserId) {
+        await prisma.eventoAuditoria.deleteMany({ where: { atorUsuarioId: adminUserId } });
+        await prisma.usuario.deleteMany({ where: { id: adminUserId } });
+      }
       if (associationId) await prisma.parceiroOrganizacao.deleteMany({ where: { id: associationId } });
       if (partnerId) {
         await prisma.eventoAuditoria.deleteMany({ where: { parceiroId: partnerId } });
@@ -254,7 +274,9 @@ test("relatório público percorre PostgreSQL, Outbox, Redis/BullMQ, worker, arq
   assert.equal(transientFailureInjected, true, "O primeiro processamento deve ter falhado para demonstrar o retry real da fila.");
   assert.ok(completed.arquivoPath);
   assert.ok(completed.arquivoSha256);
-  assert.ok(Number(completed.tamanhoBytes) > 0);
+  assert.ok(completed.tamanhoBytes !== null);
+  const expectedByteSize = Number(completed.tamanhoBytes);
+  assert.ok(Number.isSafeInteger(expectedByteSize) && expectedByteSize > 0, "O tamanho BigInt persistido precisa caber em um inteiro JSON seguro.");
 
   const storedFile = await readFile(join(reportsDirectory!, completed.arquivoPath!), "utf8");
   const actualChecksum = createHash("sha256").update(Buffer.from(storedFile, "utf8")).digest("hex");
@@ -265,12 +287,30 @@ test("relatório público percorre PostgreSQL, Outbox, Redis/BullMQ, worker, arq
   assert.equal(status.statusCode, 200, status.body);
   assert.equal(status.json().status, "COMPLETED");
   assert.equal(status.json().downloadDisponivel, true);
+  assert.equal(typeof status.json().tamanhoBytes, "number");
+  assert.equal(status.json().tamanhoBytes, expectedByteSize);
+  assert.ok(Number.isSafeInteger(status.json().tamanhoBytes));
+  assert.doesNotThrow(() => JSON.stringify(status.json()), "A resposta pública deve ser serializável em JSON.");
   assert.equal("arquivoPath" in status.json(), false, "A resposta pública não expõe o caminho físico.");
+
+  const internalStatus = await app.inject({
+    method: "GET", url: `/api/v1/relatorios/async/${reportId}`,
+    headers: { authorization: `Bearer ${adminAccessToken}` },
+  });
+  assert.equal(internalStatus.statusCode, 200, internalStatus.body);
+  assert.equal(internalStatus.json().status, "COMPLETED");
+  assert.equal(internalStatus.json().downloadDisponivel, true);
+  assert.equal(typeof internalStatus.json().tamanhoBytes, "number");
+  assert.equal(internalStatus.json().tamanhoBytes, expectedByteSize);
+  assert.ok(Number.isSafeInteger(internalStatus.json().tamanhoBytes));
+  assert.doesNotThrow(() => JSON.stringify(internalStatus.json()), "A resposta interna deve ser serializável em JSON.");
+  assert.equal("arquivoPath" in internalStatus.json(), false, "A resposta interna não expõe o caminho físico.");
 
   const downloaded = await app.inject({ method: "GET", url: `/api/v1/public/relatorios/${reportId}/download`, headers: { "x-api-key": apiKey } });
   assert.equal(downloaded.statusCode, 200, downloaded.body);
   assert.match(downloaded.headers["content-type"] as string, /application\/json/);
   assert.equal(downloaded.body, storedFile);
+  assert.equal(Buffer.byteLength(downloaded.body, "utf8"), expectedByteSize);
   const downloadedChecksum = createHash("sha256").update(Buffer.from(downloaded.body, "utf8")).digest("hex");
   assert.equal(downloadedChecksum, completed.arquivoSha256, "O conteúdo recebido pela API deve conservar o checksum validado pelo serviço.");
 

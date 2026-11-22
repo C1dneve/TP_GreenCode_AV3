@@ -57,6 +57,41 @@ const publicReportExample = {
   criadoEm: "2026-11-21T12:00:00.000Z", iniciadoEm: null, concluidoEm: null, progresso: 0,
   mensagemErro: null, downloadDisponivel: false, expiraEm: "2026-11-28T12:00:00.000Z", tamanhoBytes: null,
 };
+const reportStatusCommonProperties = {
+  id: uuid,
+  tipo: { type: "string", enum: [...reportTypes] },
+  formato: { type: "string", enum: ["CSV", "JSON"] },
+  status: { type: "string", enum: [...reportStatuses] },
+  criadoEm: { type: "string", format: "date-time" },
+  iniciadoEm: { type: ["string", "null"], format: "date-time" },
+  concluidoEm: { type: ["string", "null"], format: "date-time" },
+  progresso: { type: "integer", minimum: 0, maximum: 100 },
+  mensagemErro: { type: ["string", "null"] },
+  downloadDisponivel: { type: "boolean" },
+  expiraEm: { type: "string", format: "date-time" },
+  tamanhoBytes: {
+    anyOf: [{ type: "integer", minimum: 0 }, { type: "null" }],
+    description: "Tamanho do arquivo em bytes; inteiro JSON não negativo ou null enquanto não houver arquivo.",
+    examples: [1234, null],
+  },
+} as const;
+const internalReportStatusResponse = {
+  type: "object", additionalProperties: false,
+  required: ["id", "tipo", "formato", "status", "solicitanteUsuarioId", "parceiroId", "organizacaoId", "criadoEm", "iniciadoEm", "concluidoEm", "progresso", "mensagemErro", "downloadDisponivel", "expiraEm", "tamanhoBytes"],
+  properties: {
+    ...reportStatusCommonProperties,
+    solicitanteUsuarioId: { type: ["string", "null"], format: "uuid" },
+    parceiroId: { type: ["string", "null"], format: "uuid" },
+    organizacaoId: uuid,
+  },
+  examples: [{ ...internalReportExample, iniciadoEm: "2026-11-22T12:00:00.000Z", concluidoEm: "2026-11-22T12:00:12.000Z", tamanhoBytes: 1234, status: "COMPLETED", progresso: 100, downloadDisponivel: true }],
+} as const;
+const publicReportStatusResponse = {
+  type: "object", additionalProperties: false,
+  required: ["id", "tipo", "formato", "status", "criadoEm", "iniciadoEm", "concluidoEm", "progresso", "mensagemErro", "downloadDisponivel", "expiraEm", "tamanhoBytes"],
+  properties: reportStatusCommonProperties,
+  examples: [{ ...publicReportExample, iniciadoEm: "2026-11-22T12:00:00.000Z", concluidoEm: "2026-11-22T12:00:12.000Z", tamanhoBytes: 1234, status: "COMPLETED", progresso: 100, downloadDisponivel: true }],
+} as const;
 const acceptedExample = {
   id: "a81c6f14-9d42-4b79-8f12-4db60d4a67aa", tipo: "operacional", formato: "CSV", status: "PENDING",
   criadoEm: "2026-11-21T12:00:00.000Z", expiraEm: "2026-11-28T12:00:00.000Z",
@@ -151,7 +186,7 @@ export function registerRelatoriosAsyncRoutes(app: FastifyInstance, controller: 
     tags: ["Relatórios Assíncronos"], summary: "Consulta status e disponibilidade de um relatório",
     description: "O status pode ser PENDING, PROCESSING, COMPLETED, FAILED ou EXPIRED. A resposta não expõe o caminho físico do arquivo; downloadDisponivel indica se o endpoint de download pode ser usado.",
     security: [{ bearerAuth: [] }], params: { type: "object", additionalProperties: false, required: ["id"], properties: { id: uuid } },
-    response: { 200: { type: "object", additionalProperties: true, examples: [internalReportExample] }, 401: commonErrors[401], 403: commonErrors[403], 404: errorResponse("Identificador não encontrado.", "REPORT_NOT_FOUND", "Relatório não encontrado.") },
+    response: { 200: internalReportStatusResponse, 401: commonErrors[401], 403: commonErrors[403], 404: errorResponse("Identificador não encontrado.", "REPORT_NOT_FOUND", "Relatório não encontrado.") },
   } }, async request => controller.getInternal(request.params.id));
 
   app.post<{ Params: { id: string } }>("/api/v1/relatorios/async/:id/reprocessar", { ...internal, schema: {
@@ -207,7 +242,7 @@ export function registerRelatoriosAsyncRoutes(app: FastifyInstance, controller: 
     tags: ["API Pública", "Relatórios Assíncronos"], summary: "Consulta o status de um relatório do parceiro",
     description: "Requer escopo reports:read. O parceiro só consulta relatórios pertencentes a ele e a uma organização com associação ativa. A resposta remove o caminho interno do arquivo.",
     security: [{ apiKeyAuth: [] }], headers: { type: "object", required: ["x-api-key"], properties: { "x-api-key": { type: "string" } } }, params: { type: "object", additionalProperties: false, required: ["id"], properties: { id: uuid } },
-    response: { 200: { type: "object", additionalProperties: true, examples: [publicReportExample] }, 401: publicErrors[401], 403: publicErrors[403], 404: publicErrors[404], 429: publicErrors[429] },
+    response: { 200: publicReportStatusResponse, 401: publicErrors[401], 403: publicErrors[403], 404: publicErrors[404], 429: publicErrors[429] },
   } }, async request => controller.getPublic(request.params.id, request.integrationIdentity!));
 
   app.get<{ Params: { id: string } }>("/api/v1/public/relatorios/:id/download", { onRequest: publicAuth, preHandler: [publicLimit], schema: {

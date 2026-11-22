@@ -39,12 +39,49 @@ interface ApiErrorBody {
   };
 }
 
+function redactInternalLogText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [REDACTED]")
+    .replace(/\bgc_(?:live|test)_[A-Za-z0-9._-]+\b/g, "[API_KEY_REDACTED]")
+    .replace(/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[JWT_REDACTED]")
+    .replace(/((?:https?|postgres(?:ql)?|redis(?:s)?):\/\/)[^/\s:@]+:[^@\s/]+@/gi, "$1[REDACTED]@")
+    .replace(/((?:api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|password|senha|secret|credential|authorization)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1[REDACTED]")
+    .replace(/\b\d{14}\b/g, "[CNPJ_REDACTED]")
+    .replace(/\b\d{11}\b/g, "[CPF_REDACTED]")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[EMAIL_REDACTED]");
+}
+
+function internalErrorLogFields(error: unknown, requestId: string) {
+  const candidate = error instanceof Error ? error : new Error("Unknown internal error");
+  const errorCode = typeof error === "object" && error !== null && "code" in error
+    ? (error as { code?: unknown }).code
+    : undefined;
+  // Em testes, registra os frames sem a primeira linha (mensagem), reduzindo o
+  // risco de copiar dados de entrada/credenciais para o log junto com a exceção.
+  const stackTrace = process.env.NODE_ENV === "test" && candidate.stack
+    ? candidate.stack.split("\n").slice(1).map(redactInternalLogText).join("\n")
+    : undefined;
+  return {
+    requestId,
+    errorName: redactInternalLogText(candidate.name || "Error"),
+    ...(typeof errorCode === "string" ? { errorCode: redactInternalLogText(errorCode) } : {}),
+    ...(stackTrace ? { stackTrace } : {}),
+  };
+}
+
 export interface BuildAppOptions { prisma?: PrismaClient; jwtSecret?: string }
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const app = Fastify({
     bodyLimit: 10_485_760,
-    logger: process.env.NODE_ENV !== "test" ? { redact: { paths: ["req.headers.authorization", "req.headers.cookie", "req.headers.x-api-key", "req.headers['x-api-key']", "req.body.senha", "req.body.senhaAtual", "req.body.novaSenha", "req.body.accessToken", "req.body.password", "req.body.token", "*.senhaHash", "*.segredoHash", "*.segredo", "*.JWT_SECRET", "*.DATABASE_URL"], censor: "[REDACTED]" } } : false,
+    logger: {
+      level: process.env.NODE_ENV === "test" ? "error" : "info",
+      redact: { paths: [
+        "req.headers.authorization", "req.headers.cookie", "req.headers.x-api-key", "req.headers['x-api-key']",
+        "req.body.senha", "req.body.senhaAtual", "req.body.novaSenha", "req.body.accessToken", "req.body.password", "req.body.token",
+        "*.senhaHash", "*.segredoHash", "*.segredo", "*.JWT_SECRET", "*.DATABASE_URL", "*.REDIS_URL",
+      ], censor: "[REDACTED]" },
+    },
     disableRequestLogging: process.env.NODE_ENV === "test",
     requestIdHeader: "x-request-id",
     genReqId: () => `req-${randomUUID()}`,
@@ -122,9 +159,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error instanceof DomainError) {
-      const body: ApiErrorBody = { error: { code: error.code, message: error.message, requestId: request.id } };
-      if (error.details !== undefined) body.error.details = error.details;
-      if (error.statusCode >= 500) request.log.error({ requestId: request.id, errorName: error.name }, "Falha inesperada na requisição");
+      const body: ApiErrorBody = { error: { code: error.statusCode >= 500 ? "INTERNAL_ERROR" : error.code, message: error.statusCode >= 500 ? "Ocorreu um erro interno." : error.message, requestId: request.id } };
+      if (error.details !== undefined && error.statusCode < 500) body.error.details = error.details;
+      if (error.statusCode >= 500) request.log.error(internalErrorLogFields(error, request.id), "Falha inesperada na requisição");
       return reply.code(error.statusCode).send(body);
     }
     const validationError = Boolean((error as FastifyError & { validation?: unknown }).validation);
@@ -152,7 +189,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         reason: issue.message || "invalid",
       }));
     }
-    if (statusCode === 500) request.log.error({ requestId: request.id, errorName: error.name, errorCode: error.code }, "Falha inesperada na requisição");
+    if (statusCode === 500) request.log.error(internalErrorLogFields(error, request.id), "Falha inesperada na requisição");
     reply.code(statusCode).send(body);
   });
 

@@ -512,11 +512,14 @@ async function main() {
     "Exercita a rota Fastify real e o createApiKeyAuthenticator real; Prisma, controller e rate limiter usam doubles determinísticos, sem consulta ao PostgreSQL.",
     "rota HTTP real com autenticador/serviço simulado",
     { method: "POST", path: "/api/v1/public/lotes", apiKey: "[FICTÍCIA]", integrationId: "gci_DEMO", idempotencyKey: "demo-submission-001", body: { externalId: "erp-demo-001", notaFiscal: "NF-DEMO-001", transportadora: "Transportadora Exemplo", equipamentos: [{ tipo: "NOTEBOOK", marca: "Exemplo", modelo: "NB-14", anoFabricacao: 2024, estadoFisico: "BOM_ESTADO", pesoQuilogramas: "2.500" }] } },
-    { submissao: 201, listagem: 200, consulta: 200, atualizacao: 200, cancelamento: 200, faltaEscopo: 403, limite: 429, apiKeyAusente: 401, apiKeyInvalida: 401, apiKeyRevogada: 401 },
+    {
+      submissao: 201, listagem: 200, consulta: 200, atualizacao: 200, cancelamento: 200,
+      semEscopo: { consultaSemEscopo: 403, escritaSemEscopo: 403 },
+      limite: 429, apiKeyAusente: 401, apiKeyInvalida: 401, apiKeyRevogada: 401,
+    },
     demonstratePublicApi,
     output => {
       assert.equal(output.scenarios.submissaoAutorizada.statusCode, 201);
-      assert.equal(output.scenarios.semEscopo.statusCode, 403);
       assert.equal(output.scenarios.limiteExcedido.statusCode, 429);
       assert.equal(output.scenarios.limiteExcedido.retryAfter, "37");
       assert.equal(output.scenarios.semChave.statusCode, 401);
