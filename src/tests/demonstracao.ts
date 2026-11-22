@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import Fastify from "fastify";
 import { buildApp } from "../app.js";
@@ -494,10 +494,19 @@ async function main() {
 
   await scenario(
     "HTTP: saúde e documento OpenAPI",
-    "Inicializa Fastify com o Swagger UI integrado, sem banco, e consulta /health, /docs/json e /docs/.",
+    "Inicializa Fastify com o Swagger UI integrado, sem banco, consulta /health, /docs/json e /docs/ e confere a ordem oficial das tags no documento OpenAPI.",
     "Fastify sem banco",
     { endpoints: ["GET /health", "GET /docs/json", "GET /docs/"] },
-    { health: 200, openapi: 200, swaggerHtml: 200 },
+    {
+      health: 200,
+      openapi: 200,
+      openapiTags: [
+        "Autenticação", "Saúde", "Usuários", "Organizações", "Contratos", "Parâmetros", "Auditoria",
+        "Parceiros", "API Keys", "API Pública", "Rastreabilidade", "Análises", "Relatórios Assíncronos",
+        "Relatórios", "Lotes", "Equipamentos", "Movimentações",
+      ],
+      swaggerHtml: 200,
+    },
     async () => {
       const previous = process.env.NODE_ENV;
       process.env.NODE_ENV = "test";
@@ -510,7 +519,12 @@ async function main() {
         ]);
         return {
           health: { statusCode: health.statusCode, body: health.json() },
-          openapi: { statusCode: openapi.statusCode, title: openapi.json().info?.title, healthPath: Boolean(openapi.json().paths?.["/health"]) },
+          openapi: {
+            statusCode: openapi.statusCode,
+            title: openapi.json().info?.title,
+            healthPath: Boolean(openapi.json().paths?.["/health"]),
+            tags: openapi.json().tags?.map((tag: any) => tag.name) ?? [],
+          },
           swaggerHtml: { statusCode: docs.statusCode, contentType: docs.headers["content-type"] },
         };
       } finally {
@@ -524,6 +538,11 @@ async function main() {
       assert.deepEqual(output.health.body, { status: "ok", service: "greencode-api" });
       assert.equal(output.openapi.statusCode, 200);
       assert.equal(output.openapi.title, "GreenCode API — AV3");
+      assert.deepEqual(output.openapi.tags, [
+        "Autenticação", "Saúde", "Usuários", "Organizações", "Contratos", "Parâmetros", "Auditoria",
+        "Parceiros", "API Keys", "API Pública", "Rastreabilidade", "Análises", "Relatórios Assíncronos",
+        "Relatórios", "Lotes", "Equipamentos", "Movimentações",
+      ]);
       assert.equal(output.swaggerHtml.statusCode, 200);
       assert.match(output.swaggerHtml.contentType, /text\/html/);
     },
@@ -551,7 +570,18 @@ async function main() {
     "As demonstrações de eficiência, rentabilidade e vida útil utilizam repositórios fictícios determinísticos, mas chamam os serviços/funções analíticas da aplicação. A demonstração HTTP pública executa a rota Fastify e o `createApiKeyAuthenticator` reais, incluindo geração efêmera e validação de formato/hash de API Key; o registro Prisma, o controller e o rate limiter são simulados. Isso não comprova persistência, revogação consultada no PostgreSQL nem limitação concorrente entre instâncias.", "",
   ].join("\n");
   const reportPath = join(process.cwd(), "docs", "evidencias-testes-av3.md");
-  await writeFile(reportPath, markdown, "utf8");
+  const generatedSectionMarker = "<!-- EXECUCOES_DEMONSTRATIVAS_ATUAIS -->";
+  let historicalContent = "";
+  try {
+    historicalContent = await readFile(reportPath, "utf8");
+  } catch {
+    // O relatório histórico pode ainda não existir em uma instalação nova.
+  }
+  const markerIndex = historicalContent.indexOf(generatedSectionMarker);
+  const preservedHistory = markerIndex >= 0
+    ? historicalContent.slice(0, markerIndex).trimEnd()
+    : historicalContent.trimEnd();
+  await writeFile(reportPath, `${preservedHistory}\n\n${generatedSectionMarker}\n\n${markdown}\n`, "utf8");
 
   console.log("\n========== GREENCODE AV3 · TESTES DEMONSTRATIVOS ==========");
   for (const [index, item] of evidence.entries()) {

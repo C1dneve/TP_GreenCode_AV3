@@ -73,6 +73,7 @@ export class OperationalEfficiencyService {
     const totalDurations: number[] = [];
     const activeDurations: number[] = [];
     const waitDurations: number[] = [];
+    const preTriageWaitDurations: number[] = [];
     const byOperator = new Map<string, {
       nome: string;
       sessoesConsideradas: number;
@@ -165,14 +166,74 @@ export class OperationalEfficiencyService {
     }
 
     const lotsInPeriod = lots.filter(lot => inPeriod(lot.dataEntrada, filters));
-    const pendingLots = lotsInPeriod.filter(lot => ["RECEBIDO", "EM_TRIAGEM"].includes(lot.statusProcessamento)).length;
-    const incompleteSessions = [...sessions.values()].filter(session => session.completed === null).length;
+    const lotsInPeriodIds = new Set(lotsInPeriod.map(lot => lot.id));
+    const waitingLots = lotsInPeriod.filter(lot => lot.statusProcessamento === "RECEBIDO");
+    const processingLots = lotsInPeriod.filter(lot => lot.statusProcessamento === "EM_TRIAGEM");
+    const pendingLots = waitingLots.length + processingLots.length;
+    const incompleteSessions = [...sessions.values()].filter(session =>
+      session.completed === null && lotsInPeriodIds.has(session.loteId),
+    ).length;
+    const validStartByLot = new Map<string, Date>();
+    for (const session of sessions.values()) {
+      const lot = lotById.get(session.loteId);
+      if (!lot || !session.started || session.started < lot.dataEntrada
+        || (session.completed && session.started > session.completed)) continue;
+      const previous = validStartByLot.get(lot.id);
+      if (!previous || session.started < previous) validStartByLot.set(lot.id, session.started);
+    }
+    const lotsWithoutValidStart = lotsInPeriod.filter(lot => !validStartByLot.has(lot.id));
+    // A espera histórica é calculada uma vez por lote concluído, usando o
+    // primeiro início AV3 válido, mesmo que aquela sessão tenha ficado aberta.
+    for (const lotId of sessionsByLot.keys()) {
+      const lot = lotById.get(lotId)!;
+      const firstMeasuredStart = [...sessions.values()]
+        .filter(session => session.loteId === lotId && session.mensuravel && session.started
+          && session.started >= lot.dataEntrada && (!session.completed || session.started <= session.completed))
+        .sort((a, b) => a.started!.getTime() - b.started!.getTime())[0]?.started;
+      if (!firstMeasuredStart) continue;
+      const preTriageWait = minutes(lot.dataEntrada, firstMeasuredStart);
+      if (Number.isFinite(preTriageWait) && preTriageWait >= 0) preTriageWaitDurations.push(preTriageWait);
+    }
+    const distributionByStatus = [...lotsInPeriod.reduce((counts, lot) => {
+      counts.set(lot.statusProcessamento, (counts.get(lot.statusProcessamento) ?? 0) + 1);
+      return counts;
+    }, new Map<string, number>())]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([estado, quantidade]) => ({ estado, quantidade }));
     const finalLotCount = sessionsByLot.size;
     const validMean = (values: number[]) => average(values) === null ? null : round(average(values)!);
+    const periodResults = [...byPeriod].sort(([a], [b]) => a.localeCompare(b)).map(([periodo, values]) => ({
+      periodo, lotesConcluidos: values.length, tempoTotalMedioMinutos: validMean(values),
+    }));
+    const periodWithHighestAverage = periodResults
+      .filter(item => item.tempoTotalMedioMinutos !== null)
+      .sort((a, b) => (b.tempoTotalMedioMinutos ?? 0) - (a.tempoTotalMedioMinutos ?? 0) || a.periodo.localeCompare(b.periodo))[0] ?? null;
+    const preTriageWaitAverage = validMean(preTriageWaitDurations);
+    const preTriageWaitMedian = median(preTriageWaitDurations);
+    const diagnostic = {
+      lotesAguardandoInicioTriagem: waitingLots.length,
+      lotesEmTriagem: processingLots.length,
+      sessoesIncompletas: incompleteSessions,
+      lotesSemEventoValidoInicio: lotsWithoutValidStart.length,
+      distribuicaoLotesPorEstado: distributionByStatus,
+      tempoEsperaAntesInicioMedioMinutos: preTriageWaitAverage,
+      tempoEsperaAntesInicioMedianoMinutos: preTriageWaitMedian === null ? null : round(preTriageWaitMedian),
+      observacoesTempoEsperaAntesInicio: preTriageWaitDurations.length,
+      periodoMaiorTempoMedioProcessamento: periodWithHighestAverage,
+    };
     const result = {
       periodo: { de: filters.de?.toISOString() ?? null, ate: filters.ate?.toISOString() ?? null, criterio: "data de conclusão da triagem" },
       totalLotes: lotsInPeriod.length,
       lotesPendentes: pendingLots,
+      lotesAguardandoInicioTriagem: waitingLots.length,
+      lotesEmTriagem: processingLots.length,
+      lotesSemEventoValidoInicio: lotsWithoutValidStart.length,
+      distribuicaoLotesPorEstado: distributionByStatus,
+      tempoEsperaAntesInicioMedioMinutos: preTriageWaitAverage,
+      tempoEsperaAntesInicioMedianoMinutos: preTriageWaitMedian === null ? null : round(preTriageWaitMedian),
+      observacoesTempoEsperaAntesInicio: preTriageWaitDurations.length,
+      periodoMaiorTempoMedioProcessamento: periodWithHighestAverage,
+      diagnosticoGargalos: diagnostic,
       lotesComTriagemConcluida: finalLotCount,
       triagensConcluidas: finalLotCount,
       sessoesConcluidasHistoricas: completedSessions.length,
@@ -183,6 +244,7 @@ export class OperationalEfficiencyService {
       sessoesSemConclusao: incompleteSessions,
       tempoTotalProcessoMedioMinutos: validMean(totalDurations),
       tempoTotalProcessoMedianoMinutos: median(totalDurations) === null ? null : round(median(totalDurations)!),
+      tempoEfetivoTriagemTotalMinutos: round(totalTempoEfetivoMinutos),
       tempoEfetivoTriagemMedioMinutos: validMean(activeDurations),
       tempoEfetivoTriagemMedianoMinutos: median(activeDurations) === null ? null : round(median(activeDurations)!),
       tempoEsperaMedioMinutos: validMean(waitDurations),
@@ -224,9 +286,11 @@ export class OperationalEfficiencyService {
         };
       }),
       porOrganizacao: [...byOrganization].map(([organizacaoId, values]) => ({ organizacaoId, lotesConcluidos: values.length, tempoTotalMedioMinutos: validMean(values) })),
-      porPeriodo: [...byPeriod].sort(([a], [b]) => a.localeCompare(b)).map(([periodo, values]) => ({ periodo, lotesConcluidos: values.length, tempoTotalMedioMinutos: validMean(values) })),
-      gargalo: pendingLots > 0 ? "Existem lotes aguardando início ou conclusão de triagem." : null,
-      metodologia: "Tempo total: dataEntrada do lote até o último evento TRIAGEM_CONCLUIDA válido. Tempo efetivo: união dos intervalos TRIAGEM_INICIADA→TRIAGEM_CONCLUIDA das sessões AV3 válidas do lote; intervalos sobrepostos são atribuídos à sessão que começou primeiro e cada trecho de tempo é contado uma única vez. Comparativos por operador usam apenas sessões AV3 completas com cronologia válida; uma sessão totalmente coberta por outra permanece na amostra com zero minuto exclusivo. Média e mediana por sessão usam a duração exclusiva de cada sessão; média por lote usa a soma exclusiva do operador em cada lote; participação percentual divide o tempo exclusivo do operador pelo tempo efetivo total de todos os lotes elegíveis. Quantidades de observações acompanham cada indicador. Sessões legadas podem contribuir para o ciclo total, mas não para comparativos por operador. Cada lote entra uma única vez nas métricas de ciclo.",
+      porPeriodo: periodResults,
+      gargalo: pendingLots > 0 || incompleteSessions > 0 || lotsWithoutValidStart.length > 0
+        ? `${waitingLots.length} lote(s) aguardando início; ${processingLots.length} em triagem; ${lotsWithoutValidStart.length} sem evento válido de início; ${incompleteSessions} sessão(ões) sem conclusão.`
+        : null,
+      metodologia: "Tempo total: dataEntrada do lote até o último evento TRIAGEM_CONCLUIDA válido. Tempo efetivo: união dos intervalos TRIAGEM_INICIADA→TRIAGEM_CONCLUIDA das sessões AV3 válidas do lote; intervalos sobrepostos são atribuídos à sessão que começou primeiro e cada trecho de tempo é contado uma única vez. Comparativos por operador usam apenas sessões AV3 completas com cronologia válida; uma sessão totalmente coberta por outra permanece na amostra com zero minuto exclusivo. Média e mediana por sessão usam a duração exclusiva de cada sessão; média por lote usa a soma exclusiva do operador em cada lote; participação percentual divide o tempo exclusivo do operador pelo tempo efetivo total de todos os lotes elegíveis. Quantidades de observações acompanham cada indicador. Sessões legadas podem contribuir para o ciclo total, mas não para comparativos por operador. Cada lote entra uma única vez nas métricas de ciclo. Espera antes do início é data do primeiro TRIAGEM_INICIADA AV3 cronologicamente válido menos dataEntrada, calculada somente para lotes concluídos com início válido; não é estimada para lotes ainda abertos. O diagnóstico operacional considera estados persistidos dos lotes e eventos encontrados, sem usar relógio de parede.",
     };
     await this.repo.saveRun({
       tipo: "EFICIENCIA_OPERACIONAL", organizacaoId: filters.organizacaoId ?? null,

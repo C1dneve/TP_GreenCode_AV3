@@ -11,6 +11,42 @@
   ];
   const METHOD_NAMES = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]);
   let refreshQueued = false;
+  let currentTheme = "light";
+  const THEME_STORAGE_KEY = "greencode-swagger-theme";
+
+  function applyTheme(theme, persist = false) {
+    currentTheme = theme === "dark" ? "dark" : "light";
+    document.documentElement.setAttribute("data-gc-theme", currentTheme);
+    document.documentElement.style.colorScheme = currentTheme;
+    const control = document.querySelector("#gc-theme-toggle");
+    if (control) {
+      const icon = control.querySelector(".gc-theme-icon");
+      const label = control.querySelector(".gc-theme-label");
+      const nextTheme = currentTheme === "light" ? "escuro" : "claro";
+      if (icon) icon.textContent = currentTheme === "light" ? "☀" : "☾";
+      if (label) label.textContent = currentTheme === "light" ? "Tema claro" : "Tema escuro";
+      control.setAttribute("aria-label", `Tema atual ${currentTheme === "light" ? "claro" : "escuro"}. Alternar para tema ${nextTheme}.`);
+      control.setAttribute("aria-pressed", String(currentTheme === "dark"));
+      control.title = `Alternar para tema ${nextTheme}`;
+    }
+    if (persist) {
+      try {
+        window.localStorage.setItem(THEME_STORAGE_KEY, currentTheme);
+      } catch {
+        // Preferência não persistível não deve impedir o uso do Swagger.
+      }
+    }
+  }
+
+  function initializeTheme() {
+    let storedTheme = null;
+    try {
+      storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    } catch {
+      // Primeira visita e storage indisponível usam Light como padrão.
+    }
+    applyTheme(storedTheme === "dark" ? "dark" : "light");
+  }
 
   const slug = (value) => String(value || "")
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -29,10 +65,21 @@
         <span class="gc-brand-mark" aria-hidden="true">G</span>
         <span><strong>GreenCode</strong><small>Referência da API · AV3</small></span>
       </div>
+      <button class="gc-theme-toggle" id="gc-theme-toggle" type="button" aria-label="Alternar tema" aria-pressed="false">
+        <span class="gc-theme-icon" aria-hidden="true">☀</span>
+        <span class="gc-theme-label">Tema claro</span>
+      </button>
       <p class="gc-sidebar-caption">DOCUMENTAÇÃO</p>
       <nav class="gc-sidebar-nav" aria-label="Grupos de operações"></nav>
       <div class="gc-sidebar-footer"><span class="gc-status-dot"></span> API REST · OpenAPI</div>`;
     document.body.appendChild(sidebar);
+    const themeToggle = sidebar.querySelector("#gc-theme-toggle");
+    if (themeToggle) {
+      themeToggle.addEventListener("click", () => {
+        applyTheme(currentTheme === "light" ? "dark" : "light", true);
+      });
+    }
+    applyTheme(currentTheme);
 
     const overlay = document.createElement("button");
     overlay.type = "button";
@@ -200,6 +247,7 @@
   }
 
   function start() {
+    initializeTheme();
     const root = document.querySelector("#swagger-ui");
     if (!root) {
       window.setTimeout(start, 100);

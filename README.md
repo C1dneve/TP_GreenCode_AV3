@@ -8,9 +8,12 @@ Node.js 24, TypeScript, Fastify 5, Prisma ORM 7, PostgreSQL 17, Redis 7, BullMQ 
 
 ## Pré-requisitos
 
-- Docker Engine com plugin Compose (ou Docker Desktop/WSL2).
+- **Windows:** Windows 10 ou superior e Docker Desktop instalado/iniciado; WSL2 e virtualização habilitados quando o Docker Desktop utilizar o backend WSL2. Docker Compose é fornecido pelo Docker Desktop.
+- **Linux:** Ubuntu 24.04.03 (24.04.03 na grafia solicitada para avaliação) ou superior, ou distribuição derivada do Ubuntu compatível com Docker Engine e o plugin Docker Compose.
 - Arquivo `.env` baseado em `.env.example`.
-- Para execução npm local: Node.js `>=24 <25`, PostgreSQL 17 e Redis 7.
+- Para execução npm local, além do Docker opcional: Node.js 24 (`>=24 <25`), PostgreSQL 17 e Redis 7.
+
+A compatibilidade descrita indica os pré-requisitos esperados; não significa que todas as versões e distribuições derivadas tenham sido individualmente testadas. Com Docker Compose, Node.js, PostgreSQL e Redis não precisam estar instalados diretamente no host.
 
 ## Instalação e inicialização
 

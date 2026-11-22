@@ -38,6 +38,12 @@ interface LifeEquipmentSource {
   demonstracao: boolean;
 }
 interface EquipmentHistorySource { id: string; equipamentoId: string }
+interface EquipmentFailureSource extends EquipmentHistorySource {
+  ocorridoEm: Date;
+  categoria: string;
+  severidade: string;
+  resolvidaEm: Date | null;
+}
 interface DepreciationSource extends EquipmentHistorySource {
   avaliadoEm: Date;
   valorEstimado: NumericValue;
@@ -45,7 +51,7 @@ interface DepreciationSource extends EquipmentHistorySource {
 export interface AnalyticsLifeEquipmentRecord extends Omit<LifeEquipmentSource, "valorAquisicao" | "demonstracao"> {
   valorAquisicao: number;
   depreciacoes: Array<EquipmentHistorySource & { avaliadoEm: Date; valorEstimado: number }>;
-  falhas: EquipmentHistorySource[];
+  falhas: EquipmentFailureSource[];
   manutencoes: EquipmentHistorySource[];
 }
 
@@ -149,7 +155,7 @@ export class AnalyticsRepository {
     };
     const [depreciations, failures, maintenances] = await Promise.all([
       historyModels.historicoDepreciacao.findMany<DepreciationSource>({ where: { ...common, ...dateFilter("avaliadoEm", filters) }, orderBy: [{ avaliadoEm: "asc" }, { id: "asc" }], take: queryLimit }),
-      historyModels.falhaEquipamento.findMany<EquipmentHistorySource>({ where: { ...common, ...dateFilter("ocorridoEm", filters) }, orderBy: [{ ocorridoEm: "desc" }, { id: "desc" }], take: queryLimit }),
+      historyModels.falhaEquipamento.findMany<EquipmentFailureSource>({ where: { ...common, ...dateFilter("ocorridoEm", filters) }, orderBy: [{ ocorridoEm: "desc" }, { id: "desc" }], take: queryLimit }),
       historyModels.manutencaoEquipamento.findMany<EquipmentHistorySource>({ where: { ...common, ...dateFilter("realizadaEm", filters) }, orderBy: [{ realizadaEm: "desc" }, { id: "desc" }], take: queryLimit }),
     ]);
     ensureWithinLimit("históricos de depreciação", depreciations);

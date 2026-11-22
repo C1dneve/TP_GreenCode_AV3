@@ -55,6 +55,46 @@ test("eficiência operacional mede entrada→conclusão, triagem efetiva e esper
 });
 
 
+
+test("diagnóstico operacional quantifica filas, inícios ausentes, espera histórica e mês crítico", async () => {
+  const events = [
+    { sessaoId: "done-1", loteId: "done-1", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T09:30:00Z"), responsavelId: "op-1", responsavel: { nome: "Operador" }, lote: { id: "done-1", organizacaoId: "org" } },
+    { sessaoId: "done-1", loteId: "done-1", etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date("2026-11-20T10:30:00Z"), responsavelId: "op-1", responsavel: { nome: "Operador" }, lote: { id: "done-1", organizacaoId: "org" } },
+    { sessaoId: "done-2", loteId: "done-2", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T10:45:00Z"), responsavelId: "op-1", responsavel: { nome: "Operador" }, lote: { id: "done-2", organizacaoId: "org" } },
+    { sessaoId: "done-2", loteId: "done-2", etapa: "TRIAGEM_CONCLUIDA", ocorridoEm: new Date("2026-11-20T12:45:00Z"), responsavelId: "op-1", responsavel: { nome: "Operador" }, lote: { id: "done-2", organizacaoId: "org" } },
+    { sessaoId: "open-1", loteId: "open-1", etapa: "TRIAGEM_INICIADA", ocorridoEm: new Date("2026-11-20T11:30:00Z"), responsavelId: "op-1", responsavel: { nome: "Operador" }, lote: { id: "open-1", organizacaoId: "org" } },
+  ];
+  const repository = {
+    triageEvents: async () => events,
+    lots: async () => [
+      { id: "done-1", organizacaoId: "org", statusProcessamento: "TRIAGEM_CONCLUIDA", dataEntrada: new Date("2026-11-20T09:00:00Z") },
+      { id: "done-2", organizacaoId: "org", statusProcessamento: "TRIAGEM_CONCLUIDA", dataEntrada: new Date("2026-11-20T10:00:00Z") },
+      { id: "waiting", organizacaoId: "org", statusProcessamento: "RECEBIDO", dataEntrada: new Date("2026-11-20T08:00:00Z") },
+      { id: "open-1", organizacaoId: "org", statusProcessamento: "EM_TRIAGEM", dataEntrada: new Date("2026-11-20T11:00:00Z") },
+      { id: "open-no-start", organizacaoId: "org", statusProcessamento: "EM_TRIAGEM", dataEntrada: new Date("2026-11-20T11:15:00Z") },
+    ],
+    saveRun: async () => undefined,
+  } as unknown as AnalyticsRepository;
+
+  const result = await new OperationalEfficiencyService(repository).execute();
+  assert.equal(result.lotesAguardandoInicioTriagem, 1);
+  assert.equal(result.lotesEmTriagem, 2);
+  assert.equal(result.lotesSemEventoValidoInicio, 2);
+  assert.equal(result.sessoesSemConclusao, 1);
+  assert.deepEqual(result.distribuicaoLotesPorEstado, [
+    { estado: "EM_TRIAGEM", quantidade: 2 },
+    { estado: "RECEBIDO", quantidade: 1 },
+    { estado: "TRIAGEM_CONCLUIDA", quantidade: 2 },
+  ]);
+  assert.equal(result.tempoEsperaAntesInicioMedioMinutos, 37.5);
+  assert.equal(result.tempoEsperaAntesInicioMedianoMinutos, 37.5);
+  assert.equal(result.observacoesTempoEsperaAntesInicio, 2);
+  assert.deepEqual(result.periodoMaiorTempoMedioProcessamento, {
+    periodo: "2026-11", lotesConcluidos: 2, tempoTotalMedioMinutos: 127.5,
+  });
+  assert.equal(result.diagnosticoGargalos.lotesSemEventoValidoInicio, 2);
+});
+
 test("eficiência escolhe a última sessão concluída por lote e descarta cronologia inválida", async () => {
   const repository = {
     triageEvents: async () => [
@@ -110,7 +150,7 @@ test("comparativo por operador distribui sobreposições, explicita amostras e e
   // Lote 2: A recebe 30 min; B inicia com 10 min sobrepostos e recebe os 60 min restantes.
   addSession("a-l2", "lote-2", "op-a", "Operador A", "2026-11-20T13:00:00Z", "2026-11-20T13:30:00Z");
   addSession("b-l2", "lote-2", "op-b", "Operador B", "2026-11-20T13:20:00Z", "2026-11-20T14:30:00Z");
-  addSession("legacy-l2", "lote-2", "op-a", "Operador A", "2026-11-20T12:00:00Z", "2026-11-20T12:15:00Z", "LEGADO_AV2", false);
+  addSession("legacy-l2", "lote-2", "op-a", "Operador A", "2026-11-20T13:00:00Z", "2026-11-20T13:15:00Z", "LEGADO_AV2", false);
 
   let persisted: any;
   const repository = {
@@ -129,6 +169,7 @@ test("comparativo por operador distribui sobreposições, explicita amostras e e
   assert.equal(result.lotesComTriagemConcluida, 2, "cada lote entra uma vez no ciclo, embora tenha várias sessões");
   assert.equal(result.sessoesMensuraveis, 5, "as cinco sessões AV3 completas são mensuráveis; legado fica fora");
   assert.equal(result.sessoesLegadasSincronas, 1);
+  assert.equal(result.tempoEfetivoTriagemTotalMinutos, 210, "soma efetiva das sessões dos dois lotes, sem duplicar sobreposição");
   assert.equal(result.tempoEfetivoTriagemMedioMinutos, 105, "média dos tempos efetivos de 120 e 90 minutos por lote");
   assert.equal(result.porOperador.length, 2, "a sessão legada não cria observação de operador");
 
@@ -265,27 +306,105 @@ test("rentabilidade ignora avaliações cuja origem demonstrativa diverge da ori
   assert.equal(detail.referenciaRecuperacaoId, "reference-snapshot");
 });
 
-test("previsão de vida útil exige pelo menos três avaliações em datas distintas", async () => {
-  const item = {
-    id: "equipment-1", tipo: "NOTEBOOK", marca: "Marca", modelo: "Modelo", anoFabricacao: 2020,
+test("vida útil consolida tipos, previsões disponíveis/indisponíveis e observações", async () => {
+  const base = {
+    marca: "Marca", modelo: "Modelo", anoFabricacao: 2020,
     valorAquisicao: "1000", estadoFisico: "BOM_ESTADO", falhas: [], manutencoes: [],
+  };
+  const notebookA = {
+    ...base, id: "notebook-a", tipo: "NOTEBOOK",
+    falhas: [
+      { id: "failure-a1", equipamentoId: "notebook-a", ocorridoEm: new Date("2024-02-01T00:00:00Z"), categoria: "HARDWARE", severidade: "ALTA", resolvidaEm: null },
+      { id: "failure-a2", equipamentoId: "notebook-a", ocorridoEm: new Date("2024-03-01T00:00:00Z"), categoria: "BATERIA", severidade: "ALTA", resolvidaEm: new Date("2024-03-10T00:00:00Z") },
+    ],
+    depreciacoes: [
+      { avaliadoEm: new Date("2021-01-01T00:00:00Z"), valorEstimado: "900" },
+      { avaliadoEm: new Date("2022-01-01T00:00:00Z"), valorEstimado: "600" },
+      { avaliadoEm: new Date("2023-01-01T00:00:00Z"), valorEstimado: "300" },
+    ],
+  };
+  const notebookB = {
+    ...base, id: "notebook-b", tipo: "NOTEBOOK",
+    falhas: [
+      { id: "failure-b1", equipamentoId: "notebook-b", ocorridoEm: new Date("2024-04-01T00:00:00Z"), categoria: "CONEXAO", severidade: "BAIXA", resolvidaEm: null },
+    ],
     depreciacoes: [
       { avaliadoEm: new Date("2021-01-01T00:00:00Z"), valorEstimado: "800" },
       { avaliadoEm: new Date("2022-01-01T00:00:00Z"), valorEstimado: "600" },
       { avaliadoEm: new Date("2023-01-01T00:00:00Z"), valorEstimado: "400" },
     ],
   };
+  const smartphone = {
+    ...base, id: "smartphone-a", tipo: "SMARTPHONE",
+    depreciacoes: notebookA.depreciacoes.slice(0, 2),
+  };
+  const monitor = {
+    ...base, id: "monitor-a", tipo: "MONITOR", estadoFisico: "INSERVIVEL",
+    depreciacoes: notebookA.depreciacoes,
+  };
   let persisted = 0;
-  const repository = { lifeData: async () => [item], saveRun: async () => { persisted += 1; } } as unknown as AnalyticsRepository;
-  const available = await new UsefulLifeService(repository).execute();
-  assert.equal(available.previsoesDisponiveis, 1);
-  assert.ok(available.previsoes[0]?.mesesRemanescentesEstimados !== null);
+  const repository = {
+    lifeData: async () => [notebookA, notebookB, smartphone, monitor],
+    saveRun: async () => { persisted += 1; },
+  } as unknown as AnalyticsRepository;
+  const result = await new UsefulLifeService(repository).execute();
+
+  assert.equal(result.equipamentosAnalisados, 4);
+  assert.equal(result.previsoesDisponiveis, 2);
+  assert.equal(result.previsoesIndisponiveis, 2);
+  assert.equal(result.previsoes.length, 4, "a coleção individual existente é preservada");
+  assert.equal(result.previsoesPorTipo.length, 3);
+  const notebook = result.previsoesPorTipo.find(item => item.tipo === "NOTEBOOK")!;
+  const notebookPredictions = result.previsoes.filter(item => item.tipo === "NOTEBOOK");
+  const notebookMonths = notebookPredictions.map(item => item.mesesRemanescentesEstimados as number).sort((a, b) => a - b);
+  assert.equal(notebook.equipamentosAnalisados, 2);
+  assert.equal(notebook.previsoesDisponiveis, 2);
+  assert.equal(notebook.previsoesIndisponiveis, 0);
+  assert.equal(notebook.observacoesHistoricas, 6);
+  assert.equal(notebook.falhasObservadas, 3);
+  assert.equal(notebook.falhasNaoResolvidas, 2);
+  assert.deepEqual(notebook.falhasPorCategoria, [
+    { categoria: "BATERIA", quantidade: 1 },
+    { categoria: "CONEXAO", quantidade: 1 },
+    { categoria: "HARDWARE", quantidade: 1 },
+  ]);
+  assert.deepEqual(notebook.falhasPorSeveridade, [
+    { severidade: "ALTA", quantidade: 2 }, { severidade: "BAIXA", quantidade: 1 },
+  ]);
+  assert.equal(notebook.ultimaFalhaEm, "2024-04-01T00:00:00.000Z");
+  assert.equal(notebook.vidaUtilRemanescenteMediaMeses, Math.round(notebookMonths.reduce((a, b) => a + b, 0) / 2 * 10) / 10);
+  assert.equal(notebook.vidaUtilRemanescenteMedianaMeses, Math.round((notebookMonths[0]! + notebookMonths[1]!) / 2 * 10) / 10);
+  assert.ok(notebook.confiabilidadeMedia !== null);
+
+  const phone = result.previsoesPorTipo.find(item => item.tipo === "SMARTPHONE")!;
+  assert.equal(phone.previsoesDisponiveis, 0);
+  assert.equal(phone.previsoesIndisponiveis, 1);
+  assert.equal(phone.vidaUtilRemanescenteMediaMeses, null);
+  assert.equal(phone.vidaUtilRemanescenteMedianaMeses, null);
+  assert.equal(phone.confiabilidadeMedia, null);
+  assert.equal(phone.observacoesHistoricas, 2);
+
+  const display = result.previsoesPorTipo.find(item => item.tipo === "MONITOR")!;
+  assert.equal(display.previsoesIndisponiveis, 1);
+  assert.equal(display.observacoesHistoricas, 3);
   assert.equal(persisted, 1);
 
-  const insufficientRepo = { lifeData: async () => [{ ...item, depreciacoes: item.depreciacoes.slice(0, 2) }], saveRun: async () => undefined } as unknown as AnalyticsRepository;
+  const insufficientRepo = { lifeData: async () => [smartphone], saveRun: async () => undefined } as unknown as AnalyticsRepository;
   const insufficient = await new UsefulLifeService(insufficientRepo).execute();
   assert.equal(insufficient.previsoesDisponiveis, 0);
   assert.match(insufficient.previsoes[0]?.motivoIndisponibilidade ?? "", /três avaliações/);
+  assert.deepEqual(insufficient.previsoesPorTipo[0], {
+    tipo: "SMARTPHONE", equipamentosAnalisados: 1, previsoesDisponiveis: 0,
+    previsoesIndisponiveis: 1, vidaUtilRemanescenteMediaMeses: null,
+    vidaUtilRemanescenteMedianaMeses: null, observacoesHistoricas: 2,
+    falhasObservadas: 0, falhasNaoResolvidas: 0, falhasPorCategoria: [], falhasPorSeveridade: [],
+    ultimaFalhaEm: null, confiabilidadeMedia: null,
+  });
+
+  const empty = await new UsefulLifeService({ lifeData: async () => [], saveRun: async () => undefined } as unknown as AnalyticsRepository).execute();
+  assert.equal(empty.equipamentosAnalisados, 0);
+  assert.equal(empty.vidaUtilRemanescenteMediaMeses, null);
+  assert.deepEqual(empty.previsoesPorTipo, []);
 });
 
 test("depreciação linear é limitada a zero e usa taxa anual", () => {
@@ -324,10 +443,14 @@ test("referência de recuperação seleciona primeiro marca + modelo e respeita 
 
 test("projeções públicas de analytics removem identificadores e dados de operadores", () => {
   const efficiency = publicAnalyticsProjection("eficiencia-operacional", {
-    tempoTotalProcessoMedioMinutos: 90, porOperador: [{ operadorId: "u-1", operador: "Pessoa interna" }],
+    tempoTotalProcessoMedioMinutos: 90, tempoEfetivoTriagemTotalMinutos: 210,
+    diagnosticoGargalos: { lotesAguardandoInicioTriagem: 1 },
+    porOperador: [{ operadorId: "u-1", operador: "Pessoa interna" }],
     porOrganizacao: [{ organizacaoId: "org-interna", lotes: 1 }],
   }) as any;
   assert.equal(efficiency.tempoTotalProcessoMedioMinutos, 90);
+  assert.equal(efficiency.tempoEfetivoTriagemTotalMinutos, 210);
+  assert.equal(efficiency.diagnosticoGargalos.lotesAguardandoInicioTriagem, 1);
   assert.equal("porOperador" in efficiency, false);
   assert.equal("porOrganizacao" in efficiency, false);
   const profitability = publicAnalyticsProjection("rentabilidade", {
@@ -337,9 +460,15 @@ test("projeções públicas de analytics removem identificadores e dados de oper
   assert.equal("equipamentoId" in profitability.detalhesEquipamentos[0], false);
   assert.equal("referenciaRecuperacaoId" in profitability.detalhesEquipamentos[0], false);
   const life = publicAnalyticsProjection("vida-util", {
+    previsoesPorTipo: [{ tipo: "NOTEBOOK", equipamentosAnalisados: 1, previsoesDisponiveis: 1,
+      falhasPorCategoria: [{ categoria: "HARDWARE", quantidade: 2 }], ultimaFalhaEm: "2026-01-01T00:00:00.000Z" }],
     previsoes: [{ equipamentoId: "internal-id", tipo: "NOTEBOOK", mesesRemanescentesEstimados: 12 }],
   }) as any;
   assert.equal("equipamentoId" in life.previsoes[0], false);
+  assert.equal(life.previsoesPorTipo[0].tipo, "NOTEBOOK");
+  assert.deepEqual(life.previsoesPorTipo[0].falhasPorCategoria, [{ categoria: "HARDWARE", quantidade: 2 }]);
+  assert.equal(life.previsoesPorTipo[0].ultimaFalhaEm, "2026-01-01T00:00:00.000Z");
+  assert.equal("equipamentoId" in life.previsoesPorTipo[0], false);
 });
 
 test("relatório público de equipamentos remove barcode e IDs internos", () => {

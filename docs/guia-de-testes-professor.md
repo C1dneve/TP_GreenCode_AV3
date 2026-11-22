@@ -1,16 +1,17 @@
 # Guia de execução e testes — GreenCode AV3
 
-Este guia descreve como preparar o ambiente, iniciar a API, executar testes automatizados e demonstrar a integração pública. A sequência foi escrita para Windows 10 ou superior e Ubuntu 24.04 ou superior. Os comandos Docker Compose funcionam no PowerShell e no Bash; os comandos específicos do terminal estão identificados.
+Este guia descreve como preparar o ambiente, iniciar a API, executar testes automatizados e demonstrar a integração pública. A sequência foi escrita para Windows 10 ou superior e Ubuntu 24.04.03 (24.04.03 na grafia solicitada para avaliação) ou superior, incluindo distribuições derivadas do Ubuntu compatíveis com Docker Engine e Docker Compose. Os comandos Docker Compose funcionam no PowerShell e no Bash; os comandos específicos do terminal estão identificados.
 
 ## 1. Preparar e iniciar o projeto
 
 ### Pré-requisitos
 
-- Windows 10+ com Docker Desktop iniciado; ou Ubuntu 24.04+ com Docker Engine e plugin Docker Compose.
+- **Windows:** Windows 10 ou superior, Docker Desktop instalado e iniciado. Habilite virtualização e WSL2 quando utilizar o backend WSL2. O Docker Desktop inclui Docker Compose; valide com `docker compose version`.
+- **Linux:** Ubuntu 24.04.03 (24.04.03 na grafia solicitada para avaliação) ou superior, ou distribuição derivada do Ubuntu compatível com Docker Engine e plugin Docker Compose. Instale e inicie o Docker Engine, instale o plugin Compose e valide com `docker compose version`.
 - Acesso à pasta raiz do projeto, onde estão `Dockerfile`, `docker-compose.yml` e `.env.example`.
 - Conexão à internet na primeira construção para baixar as imagens Docker e dependências npm.
 
-A execução recomendada usa Docker Compose, portanto não exige instalação local de Node.js ou PostgreSQL. Para executar comandos npm diretamente na máquina, é necessário Node.js 24.x e PostgreSQL 17.
+A execução recomendada usa Docker Compose, portanto não exige Node.js, PostgreSQL ou Redis instalados diretamente no host. Para executar comandos npm diretamente na máquina, instale Node.js 24.x; para serviços locais sem Docker, disponibilize também PostgreSQL 17 e Redis 7. A compatibilidade declarada para distribuições derivadas descreve os requisitos de Docker, mas não significa que cada distribuição ou versão tenha sido individualmente testada ou homologada.
 
 ### 1.1 Criar o arquivo `.env`
 
@@ -20,7 +21,7 @@ A execução recomendada usa Docker Compose, portanto não exige instalação lo
 if (-not (Test-Path .\.env)) { Copy-Item .env.example .env }
 ```
 
-**Ubuntu (Bash):**
+**Ubuntu ou distribuição derivada compatível (Bash):**
 
 ```bash
 if [ ! -f .env ]; then cp .env.example .env; fi
@@ -47,7 +48,7 @@ Set-Content -Path .\.env -Value $envLines -Encoding ascii
 Write-Host 'JWT_SECRET gerado e gravado no .env; o valor não foi exibido.'
 ```
 
-**Ubuntu (Bash):**
+**Ubuntu ou distribuição derivada compatível (Bash):**
 
 ```bash
 set -eu
@@ -90,7 +91,7 @@ Aguarde `postgres` e `api` ficarem `healthy`. Se estiverem `starting`, aguarde a
 Invoke-RestMethod http://localhost:3000/health
 ```
 
-**Ubuntu (Bash):**
+**Ubuntu ou distribuição derivada compatível (Bash):**
 
 ```bash
 curl --fail --show-error http://localhost:3000/health
@@ -364,7 +365,7 @@ A migration em banco limpo deve ser verificada também usando um ambiente descar
 
 ### 6.4 Execução diretamente na máquina (opcional)
 
-Se não utilizar Docker, instale Node.js 24.x e PostgreSQL 17. Crie um banco dedicado para a aplicação e configure `DATABASE_URL` no `.env`, por exemplo:
+Se não utilizar Docker, instale Node.js 24.x, PostgreSQL 17 e Redis 7. Crie um banco dedicado para a aplicação e configure `DATABASE_URL` no `.env`, por exemplo:
 
 ```text
 DATABASE_URL=postgresql://greencode:SENHA_LOCAL@127.0.0.1:5433/greencode?schema=public
@@ -415,7 +416,7 @@ A demonstração cobre as operações de domínio para eficiência, rentabilidad
 
 ### 6.7 Estado de execução desta entrega
 
-A documentação e o código de demonstração foram preparados, mas não foi possível executar `npm run test:demonstracao` nesta sessão porque o ambiente disponibilizou Node.js 22.16.0, enquanto o projeto requer Node.js 24, e a instalação npm expirou sem disponibilizar dependências locais. Docker, PostgreSQL e Redis também não estavam disponíveis. Por isso, não há saída de teste marcada como aprovada nesta entrega; o arquivo de evidências registra esse bloqueio. Execute os comandos acima em ambiente Node 24/Docker antes de apresentar os resultados como homologados.
+A última execução do GitHub Actions informada antes da correção ocorreu em Node.js 24: build TypeScript e Prisma Generate concluíram; 63 de 64 testes unitários passaram. O teste reprovado foi identificado como uma fixture legada com conclusão anterior à entrada do lote. A fixture foi corrigida sem alterar a regra do serviço ou enfraquecer asserts. Esta cópia de trabalho continua sem uma nova execução verificável: o ambiente local disponibiliza Node.js 22.16.0 (o projeto exige Node.js 24), sem dependências instaladas e sem Docker. A nova execução do CI deve confirmar o resultado após a correção; não trate o resultado anterior de 63/1 como resultado posterior à mudança. Consulte `docs/evidencias-testes-av3.md` para a separação do histórico e dos resultados.
 
 ## 7. Como registrar a avaliação
 

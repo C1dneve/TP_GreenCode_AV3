@@ -20,11 +20,17 @@ interface PublicAnalyticsBody {
 const internalAnalyticsExamples = [
   {
     periodo: { de: null, ate: null, criterio: "data de conclusão da triagem" },
-    totalLotes: 2, lotesPendentes: 0, lotesComTriagemConcluida: 2,
+    totalLotes: 2, lotesPendentes: 0, lotesAguardandoInicioTriagem: 0, lotesEmTriagem: 0,
+    lotesSemEventoValidoInicio: 0, distribuicaoLotesPorEstado: [{ estado: "TRIAGEM_CONCLUIDA", quantidade: 2 }],
+    tempoEsperaAntesInicioMedioMinutos: 15, tempoEsperaAntesInicioMedianoMinutos: 15,
+    observacoesTempoEsperaAntesInicio: 2,
+    periodoMaiorTempoMedioProcessamento: { periodo: "2026-11", lotesConcluidos: 2, tempoTotalMedioMinutos: 105 },
+    diagnosticoGargalos: { lotesAguardandoInicioTriagem: 0, lotesEmTriagem: 0, sessoesIncompletas: 0, lotesSemEventoValidoInicio: 0, distribuicaoLotesPorEstado: [{ estado: "TRIAGEM_CONCLUIDA", quantidade: 2 }], tempoEsperaAntesInicioMedioMinutos: 15, tempoEsperaAntesInicioMedianoMinutos: 15, observacoesTempoEsperaAntesInicio: 2, periodoMaiorTempoMedioProcessamento: { periodo: "2026-11", lotesConcluidos: 2, tempoTotalMedioMinutos: 105 } },
+    lotesComTriagemConcluida: 2,
     triagensConcluidas: 2, sessoesConcluidasHistoricas: 5, sessoesMensuraveis: 5,
     sessoesLegadasSincronas: 0, sessoesSemInicio: 0, sessoesComCronologiaInvalida: 0, sessoesSemConclusao: 0,
     tempoTotalProcessoMedioMinutos: 105, tempoTotalProcessoMedianoMinutos: 105,
-    tempoEfetivoTriagemMedioMinutos: 105, tempoEfetivoTriagemMedianoMinutos: 105,
+    tempoEfetivoTriagemTotalMinutos: 210, tempoEfetivoTriagemMedioMinutos: 105, tempoEfetivoTriagemMedianoMinutos: 105,
     tempoEsperaMedioMinutos: 0, tempoEsperaMedianoMinutos: 0,
     distribuicaoTempoTotalMinutos: { p25: 97.5, p75: 112.5, p90: 117, minimo: 90, maximo: 120 },
     porOperador: [
@@ -47,17 +53,24 @@ const internalAnalyticsExamples = [
   {
     equipamentosAnalisados: 1, previsoesDisponiveis: 1, previsoesIndisponiveis: 0,
     vidaUtilRemanescenteMediaMeses: 24, confiabilidadeMedia: 0.81,
+    previsoesPorTipo: [{ tipo: "NOTEBOOK", equipamentosAnalisados: 1, previsoesDisponiveis: 1, previsoesIndisponiveis: 0, vidaUtilRemanescenteMediaMeses: 24, vidaUtilRemanescenteMedianaMeses: 24, observacoesHistoricas: 3, falhasObservadas: 0, falhasNaoResolvidas: 0, falhasPorCategoria: [], falhasPorSeveridade: [], ultimaFalhaEm: null, confiabilidadeMedia: 0.81 }],
     previsoes: [{ equipamentoId: "internal-equipment-id", tipo: "NOTEBOOK", marca: "ACME", modelo: "NB-14", idadeAnos: 6, estadoFisico: "BOM_ESTADO", falhasObservadas: 0, manutencoesObservadas: 1, observacoes: 3, mesesRemanescentesEstimados: 24, dataEstimadaInservivel: "2028-11-21T00:00:00.000Z", tendenciaValorPorMes: -16.44, rSquared: 1, confiabilidade: 0.81, metodo: "Regressão linear OLS sobre valor estimado de depreciação x idade em meses, ajustada por condição física, falhas e manutenções", indisponivel: false, motivoIndisponibilidade: null }],
-    limitacao: "Exige ao menos três observações em datas distintas, tendência negativa e R² mínimo de 0,35; o resultado é estimativo, não uma garantia de falha.",
+    limitacao: "Exige três observações em datas distintas, tendência negativa e R² mínimo de 0,35. A penalização original usa quantidade de falhas; categoria, severidade, resolução e data da última falha são contexto, sem alterar os pesos. Resultado estimativo, não garantia de falha.",
   },
 ];
 
 const publicAnalyticsExamples = [
   {
     periodo: { de: "2026-11-01T00:00:00.000Z", ate: "2026-11-21T23:59:59.999Z", criterio: "data de conclusão da triagem" },
-    totalLotes: 2, lotesPendentes: 0, lotesComTriagemConcluida: 2, sessoesMensuraveis: 5,
+    totalLotes: 2, lotesPendentes: 0, lotesAguardandoInicioTriagem: 0, lotesEmTriagem: 0,
+    lotesSemEventoValidoInicio: 0, distribuicaoLotesPorEstado: [{ estado: "TRIAGEM_CONCLUIDA", quantidade: 2 }],
+    tempoEsperaAntesInicioMedioMinutos: 15, tempoEsperaAntesInicioMedianoMinutos: 15,
+    observacoesTempoEsperaAntesInicio: 2,
+    periodoMaiorTempoMedioProcessamento: { periodo: "2026-11", lotesConcluidos: 2, tempoTotalMedioMinutos: 105 },
+    diagnosticoGargalos: { lotesAguardandoInicioTriagem: 0, lotesEmTriagem: 0, sessoesIncompletas: 0, lotesSemEventoValidoInicio: 0, distribuicaoLotesPorEstado: [{ estado: "TRIAGEM_CONCLUIDA", quantidade: 2 }], tempoEsperaAntesInicioMedioMinutos: 15, tempoEsperaAntesInicioMedianoMinutos: 15, observacoesTempoEsperaAntesInicio: 2, periodoMaiorTempoMedioProcessamento: { periodo: "2026-11", lotesConcluidos: 2, tempoTotalMedioMinutos: 105 } },
+    lotesComTriagemConcluida: 2, sessoesMensuraveis: 5,
     tempoTotalProcessoMedioMinutos: 105, tempoTotalProcessoMedianoMinutos: 105,
-    tempoEfetivoTriagemMedioMinutos: 105, tempoEfetivoTriagemMedianoMinutos: 105,
+    tempoEfetivoTriagemTotalMinutos: 210, tempoEfetivoTriagemMedioMinutos: 105, tempoEfetivoTriagemMedianoMinutos: 105,
     tempoEsperaMedioMinutos: 0, tempoEsperaMedianoMinutos: 0,
     distribuicaoTempoTotalMinutos: { p25: 97.5, p75: 112.5, p90: 117, minimo: 90, maximo: 120 },
     porPeriodo: [{ periodo: "2026-11", lotesConcluidos: 2, tempoTotalMedioMinutos: 105 }], gargalo: null,
@@ -78,10 +91,82 @@ const publicAnalyticsExamples = [
   {
     equipamentosAnalisados: 1, previsoesDisponiveis: 1, previsoesIndisponiveis: 0,
     vidaUtilRemanescenteMediaMeses: 24, confiabilidadeMedia: 0.81,
+    previsoesPorTipo: [{ tipo: "NOTEBOOK", equipamentosAnalisados: 1, previsoesDisponiveis: 1, previsoesIndisponiveis: 0, vidaUtilRemanescenteMediaMeses: 24, vidaUtilRemanescenteMedianaMeses: 24, observacoesHistoricas: 3, falhasObservadas: 0, falhasNaoResolvidas: 0, falhasPorCategoria: [], falhasPorSeveridade: [], ultimaFalhaEm: null, confiabilidadeMedia: 0.81 }],
     previsoes: [{ tipo: "NOTEBOOK", marca: "ACME", modelo: "NB-14", idadeAnos: 6, estadoFisico: "BOM_ESTADO", falhasObservadas: 0, manutencoesObservadas: 1, observacoes: 3, mesesRemanescentesEstimados: 24, dataEstimadaInservivel: "2028-11-21T00:00:00.000Z", tendenciaValorPorMes: -16.44, rSquared: 1, confiabilidade: 0.81, metodo: "Regressão linear OLS sobre valor estimado de depreciação x idade em meses, ajustada por condição física, falhas e manutenções", indisponivel: false, motivoIndisponibilidade: null }],
-    limitacao: "Exige ao menos três observações em datas distintas, tendência negativa e R² mínimo de 0,35; o resultado é estimativo, não uma garantia de falha.",
+    limitacao: "Exige três observações em datas distintas, tendência negativa e R² mínimo de 0,35. A penalização original usa quantidade de falhas; categoria, severidade, resolução e data da última falha são contexto, sem alterar os pesos. Resultado estimativo, não garantia de falha.",
   },
 ];
+
+const estadoDistributionSchema = {
+  type: "array",
+  items: {
+    type: "object", additionalProperties: false, required: ["estado", "quantidade"],
+    properties: { estado: { type: "string" }, quantidade: { type: "integer", minimum: 0 } },
+  },
+} as const;
+const periodBottleneckSchema = {
+  type: "object", nullable: true, additionalProperties: false,
+  required: ["periodo", "lotesConcluidos", "tempoTotalMedioMinutos"],
+  properties: {
+    periodo: { type: "string", examples: ["2026-11"] },
+    lotesConcluidos: { type: "integer", minimum: 1 },
+    tempoTotalMedioMinutos: { type: "number", minimum: 0 },
+  },
+} as const;
+const operationalDiagnosticSchema = {
+  type: "object", additionalProperties: false,
+  required: ["lotesAguardandoInicioTriagem", "lotesEmTriagem", "sessoesIncompletas", "lotesSemEventoValidoInicio", "distribuicaoLotesPorEstado", "tempoEsperaAntesInicioMedioMinutos", "tempoEsperaAntesInicioMedianoMinutos", "observacoesTempoEsperaAntesInicio", "periodoMaiorTempoMedioProcessamento"],
+  properties: {
+    lotesAguardandoInicioTriagem: { type: "integer", minimum: 0 },
+    lotesEmTriagem: { type: "integer", minimum: 0 },
+    sessoesIncompletas: { type: "integer", minimum: 0 },
+    lotesSemEventoValidoInicio: { type: "integer", minimum: 0 },
+    distribuicaoLotesPorEstado: estadoDistributionSchema,
+    tempoEsperaAntesInicioMedioMinutos: { type: "number", minimum: 0, nullable: true },
+    tempoEsperaAntesInicioMedianoMinutos: { type: "number", minimum: 0, nullable: true },
+    observacoesTempoEsperaAntesInicio: { type: "integer", minimum: 0 },
+    periodoMaiorTempoMedioProcessamento: periodBottleneckSchema,
+  },
+} as const;
+const failureDistributionSchema = (field: "categoria" | "severidade") => ({
+  type: "array",
+  items: {
+    type: "object", additionalProperties: false, required: [field, "quantidade"],
+    properties: { [field]: { type: "string" }, quantidade: { type: "integer", minimum: 0 } },
+  },
+});
+const usefulLifeTypeSummarySchema = {
+  type: "object", additionalProperties: false,
+  required: ["tipo", "equipamentosAnalisados", "previsoesDisponiveis", "previsoesIndisponiveis", "vidaUtilRemanescenteMediaMeses", "vidaUtilRemanescenteMedianaMeses", "observacoesHistoricas", "falhasObservadas", "falhasNaoResolvidas", "falhasPorCategoria", "falhasPorSeveridade", "ultimaFalhaEm", "confiabilidadeMedia"],
+  properties: {
+    tipo: { type: "string" },
+    equipamentosAnalisados: { type: "integer", minimum: 0 },
+    previsoesDisponiveis: { type: "integer", minimum: 0 },
+    previsoesIndisponiveis: { type: "integer", minimum: 0 },
+    vidaUtilRemanescenteMediaMeses: { type: "number", minimum: 0, nullable: true },
+    vidaUtilRemanescenteMedianaMeses: { type: "number", minimum: 0, nullable: true },
+    observacoesHistoricas: { type: "integer", minimum: 0 },
+    falhasObservadas: { type: "integer", minimum: 0 },
+    falhasNaoResolvidas: { type: "integer", minimum: 0 },
+    falhasPorCategoria: failureDistributionSchema("categoria"),
+    falhasPorSeveridade: failureDistributionSchema("severidade"),
+    ultimaFalhaEm: { type: "string", format: "date-time", nullable: true },
+    confiabilidadeMedia: { type: "number", minimum: 0, maximum: 1, nullable: true },
+  },
+} as const;
+const analyticsResponseProperties = {
+  diagnosticoGargalos: operationalDiagnosticSchema,
+  lotesAguardandoInicioTriagem: { type: "integer", minimum: 0 },
+  lotesEmTriagem: { type: "integer", minimum: 0 },
+  lotesSemEventoValidoInicio: { type: "integer", minimum: 0 },
+  distribuicaoLotesPorEstado: estadoDistributionSchema,
+  tempoEsperaAntesInicioMedioMinutos: { type: "number", minimum: 0, nullable: true },
+  tempoEsperaAntesInicioMedianoMinutos: { type: "number", minimum: 0, nullable: true },
+  observacoesTempoEsperaAntesInicio: { type: "integer", minimum: 0 },
+  periodoMaiorTempoMedioProcessamento: periodBottleneckSchema,
+  tempoEfetivoTriagemTotalMinutos: { type: "number", minimum: 0 },
+  previsoesPorTipo: { type: "array", items: usefulLifeTypeSummarySchema },
+} as const;
 
 type PublicHook = (request: FastifyRequest, reply: FastifyReply) => void | Promise<void>;
 type RateLimiter = { consume(key: string, limit: number): Promise<{ allowed: boolean; remaining: number; resetAt: number; retryAfterSeconds: number }> };
@@ -93,7 +178,7 @@ export function registerAnalyticsRoutes(app: FastifyInstance, controller: Analyt
     security: [{ bearerAuth: [] }], body: filters,
     response: { 200: { type: "object", additionalProperties: true, examples: [{ periodo: { de: null, ate: null, avaliadoAte: "2026-11-21T12:00:00.000Z" }, previsoesEncontradas: 2, previsoesAindaNaoMaduras: 0, previsoesMadurasSemEventoObservado: 1, previsoesAvaliadas: 1, erroMedioDias: 18, erroAbsolutoMedioDias: 18, erroPercentualAbsolutoMedio: 6.4, metodo: "Erro entre data prevista e primeira transição auditada para INSERVIVEL posterior à execução da previsão. MAPE usa o horizonte previsto como denominador; previsões sem evento observado são reportadas separadamente.", limitacao: "A ausência de evento não prova que o equipamento permaneceu utilizável." }] }, 400: err, 403: err },
   } }, async request => controller.backtestLife(normalizeFilters({ ...request.body, incluirDemonstracao: false })));
-  app.post<{ Params: { tipo: string }; Body: AnalyticsFilterBody }>("/api/v1/analytics/:tipo", { ...auth, schema: { tags: ["Análises"], summary: "Executa e persiste uma análise GreenCode", description: "Escolha eficiencia-operacional, rentabilidade ou vida-util. A resposta contém os indicadores calculados e os metadados metodológicos do serviço selecionado. A rota exige JWT e papel ADMINISTRADOR ou AUDITOR; ADMINISTRADOR/AUDITOR são verificados no preHandler.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["tipo"], properties: { tipo: { type: "string", enum: ["eficiencia-operacional", "rentabilidade", "vida-util"], examples: ["eficiencia-operacional"] } } }, body: filters, response: { 200: { type: "object", additionalProperties: true, examples: internalAnalyticsExamples }, 400: err, 403: err } } }, async request => controller.execute(request.params.tipo, normalizeFilters(request.body)));
+  app.post<{ Params: { tipo: string }; Body: AnalyticsFilterBody }>("/api/v1/analytics/:tipo", { ...auth, schema: { tags: ["Análises"], summary: "Executa e persiste uma análise GreenCode", description: "Escolha eficiencia-operacional, rentabilidade ou vida-util. A resposta contém os indicadores calculados e os metadados metodológicos do serviço selecionado. A rota exige JWT e papel ADMINISTRADOR ou AUDITOR; ADMINISTRADOR/AUDITOR são verificados no preHandler.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["tipo"], properties: { tipo: { type: "string", enum: ["eficiencia-operacional", "rentabilidade", "vida-util"], examples: ["eficiencia-operacional"] } } }, body: filters, response: { 200: { type: "object", additionalProperties: true, properties: analyticsResponseProperties, examples: internalAnalyticsExamples }, 400: err, 403: err } } }, async request => controller.execute(request.params.tipo, normalizeFilters(request.body)));
   app.get<{ Params: { tipo: string }; Querystring: { organizacaoId?: string; limit?: number } }>("/api/v1/analytics/:tipo/historico", { ...auth, schema: { tags: ["Análises"], summary: "Consulta execuções analíticas persistidas", description: "Retorna as execuções mais recentes do tipo solicitado. O limite padrão é 20 e o máximo é 100 registros.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["tipo"], properties: { tipo: { type: "string", enum: ["eficiencia-operacional", "rentabilidade", "vida-util"], examples: ["eficiencia-operacional"] } } }, querystring: { type: "object", additionalProperties: false, properties: { organizacaoId: { ...uuid, description: "Filtra por organização." }, limit: { type: "integer", minimum: 1, maximum: 100, default: 20, examples: [20] } }, examples: [{ limit: 10 }] }, response: { 200: { type: "array", items: { type: "object" }, examples: [[{ tipo: "EFICIENCIA_OPERACIONAL", metodo: "Ciclo de lote (entrada→conclusão), união de sessões efetivas e espera", versaoModelo: "3.0.0", executadoEm: "2026-11-21T12:00:00.000Z", observacoes: 2, indisponivel: false, motivo: null, resultado: { lotesComTriagemConcluida: 2 } }]] }, 403: err } } }, async request => {
     const rows = await controller.history(request.params.tipo, request.query.organizacaoId);
     return rows.slice(0, request.query.limit ?? 20);
@@ -115,7 +200,7 @@ export function registerAnalyticsRoutes(app: FastifyInstance, controller: Analyt
   const typeParams = { type: "object", required: ["tipo"], properties: { tipo: { type: "string", enum: ["eficiencia-operacional", "rentabilidade", "vida-util"] } } } as const;
   const publicBody = { type: "object", additionalProperties: false, properties: { de: { type: "string", format: "date-time", examples: ["2026-11-01T00:00:00.000Z"] }, ate: { type: "string", format: "date-time", examples: ["2026-11-21T23:59:59.999Z"] } }, examples: [{ de: "2026-11-01T00:00:00.000Z", ate: "2026-11-21T23:59:59.999Z" }] } as const;
   const publicIntegrationHeader = { type: "object", additionalProperties: true, required: ["x-api-key", "x-integration-id"], properties: { "x-api-key": { type: "string", description: "API Key enviada pelo header X-API-Key ou preenchida em Authorize." }, "x-integration-id": { type: "string", minLength: 1, maxLength: 64, description: "Identificador público parceiro-organização ativo.", examples: ["gci_0123456789abcdef0123456789abcdef"] } }, examples: [{ "x-api-key": "gc_live_COLOQUE_SUA_CHAVE", "x-integration-id": "gci_0123456789abcdef0123456789abcdef" }] } as const;
-  app.post<{ Params: { tipo: string }; Body: PublicAnalyticsBody }>("/api/v1/public/analytics/:tipo", { onRequest: publicAuth, preHandler: [publicPre("analytics:write")], schema: { tags: ["API Pública", "Análises"], summary: "Executa análise no escopo da integração autorizada", description: "Requer API Key com analytics:write e X-Integration-ID ativo. A organização é resolvida pelo identificador público e os registros demonstrativos são sempre excluídos. Respostas: 401 chave inválida/ausente; 403 escopo insuficiente ou associação não autorizada; 404 integração ou tipo de análise inexistente; 413 payload acima do limite; 429 limite por parceiro/chave excedido (header Retry-After). A projeção pública remove dados internos de operadores e IDs do banco.", security: [{ apiKeyAuth: [] }], params: typeParams, headers: publicIntegrationHeader, body: publicBody, response: { 200: { type: "object", additionalProperties: true, examples: publicAnalyticsExamples }, 401: err, 403: err, 404: err, 400: err, 413: err, 429: err } } }, async request => {
+  app.post<{ Params: { tipo: string }; Body: PublicAnalyticsBody }>("/api/v1/public/analytics/:tipo", { onRequest: publicAuth, preHandler: [publicPre("analytics:write")], schema: { tags: ["API Pública", "Análises"], summary: "Executa análise no escopo da integração autorizada", description: "Requer API Key com analytics:write e X-Integration-ID ativo. A organização é resolvida pelo identificador público e os registros demonstrativos são sempre excluídos. Respostas: 401 chave inválida/ausente; 403 escopo insuficiente ou associação não autorizada; 404 integração ou tipo de análise inexistente; 413 payload acima do limite; 429 limite por parceiro/chave excedido (header Retry-After). A projeção pública remove dados internos de operadores e IDs do banco.", security: [{ apiKeyAuth: [] }], params: typeParams, headers: publicIntegrationHeader, body: publicBody, response: { 200: { type: "object", additionalProperties: true, properties: analyticsResponseProperties, examples: publicAnalyticsExamples }, 401: err, 403: err, 404: err, 400: err, 413: err, 429: err } } }, async request => {
     const identity = request.integrationIdentity!;
     const integrationId = request.headers["x-integration-id"];
     if (typeof integrationId !== "string" || !integrationId.trim()) throw errors.badRequest("MISSING_INTEGRATION_HEADER", "Informe X-Integration-ID.");

@@ -6,8 +6,12 @@ export function publicAnalyticsProjection(type: string, value: unknown): unknown
       "periodo", "totalLotes", "lotesPendentes", "lotesComTriagemConcluida", "triagensConcluidas",
       "sessoesMensuraveis", "sessoesLegadasSincronas", "sessoesSemInicio",
       "sessoesComCronologiaInvalida", "sessoesSemConclusao",
+      "lotesAguardandoInicioTriagem", "lotesEmTriagem", "lotesSemEventoValidoInicio",
+      "distribuicaoLotesPorEstado", "tempoEsperaAntesInicioMedioMinutos",
+      "tempoEsperaAntesInicioMedianoMinutos", "observacoesTempoEsperaAntesInicio",
+      "periodoMaiorTempoMedioProcessamento", "diagnosticoGargalos",
       "tempoTotalProcessoMedioMinutos", "tempoTotalProcessoMedianoMinutos",
-      "tempoEfetivoTriagemMedioMinutos", "tempoEfetivoTriagemMedianoMinutos",
+      "tempoEfetivoTriagemTotalMinutos", "tempoEfetivoTriagemMedioMinutos", "tempoEfetivoTriagemMedianoMinutos",
       "tempoEsperaMedioMinutos", "tempoEsperaMedianoMinutos", "distribuicaoTempoTotalMinutos",
       "porPeriodo", "gargalo", "metodologia",
     ];
@@ -46,6 +50,7 @@ export function publicAnalyticsProjection(type: string, value: unknown): unknown
       previsoesIndisponiveis: result.previsoesIndisponiveis,
       vidaUtilRemanescenteMediaMeses: result.vidaUtilRemanescenteMediaMeses,
       confiabilidadeMedia: result.confiabilidadeMedia,
+      previsoesPorTipo: result.previsoesPorTipo,
       previsoes: predictions,
       limitacao: result.limitacao,
     };

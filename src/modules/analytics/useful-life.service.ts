@@ -1,5 +1,5 @@
 import { AnalyticsRepository, type AnalyticsFilters, type AnalyticsLifeEquipmentRecord } from "./analytics.repository.js";
-import { linearRegression, round } from "./statistics.js";
+import { linearRegression, median, round } from "./statistics.js";
 
 const STATE_SCORE: Record<string, number> = { NOVO: 1, BOM_ESTADO: .9, USADO_LEVE: .78, USADO_MODERADO: .62, DANIFICADO_LEVE: .4, DANIFICADO_GRAVE: .2, INSERVIVEL: 0 };
 type RegressionPoint = [number, number];
@@ -25,12 +25,29 @@ export interface LifePrediction {
 }
 
 /** Resultado público e persistível da análise de vida útil remanescente. */
+export interface UsefulLifeTypeSummary {
+  tipo: string;
+  equipamentosAnalisados: number;
+  previsoesDisponiveis: number;
+  previsoesIndisponiveis: number;
+  vidaUtilRemanescenteMediaMeses: number | null;
+  vidaUtilRemanescenteMedianaMeses: number | null;
+  observacoesHistoricas: number;
+  falhasObservadas: number;
+  falhasNaoResolvidas: number;
+  falhasPorCategoria: Array<{ categoria: string; quantidade: number }>;
+  falhasPorSeveridade: Array<{ severidade: string; quantidade: number }>;
+  ultimaFalhaEm: string | null;
+  confiabilidadeMedia: number | null;
+}
+
 export interface UsefulLifeAnalysisResult {
   equipamentosAnalisados: number;
   previsoesDisponiveis: number;
   previsoesIndisponiveis: number;
   vidaUtilRemanescenteMediaMeses: number | null;
   confiabilidadeMedia: number | null;
+  previsoesPorTipo: UsefulLifeTypeSummary[];
   previsoes: LifePrediction[];
   limitacao: string;
 }
@@ -102,20 +119,72 @@ export class UsefulLifeService {
       };
     });
     const valid: AvailableLifePrediction[] = predictions.filter(isAvailablePrediction);
+    const byType = new Map<string, LifePrediction[]>();
+    for (const prediction of predictions) {
+      const items = byType.get(prediction.tipo) ?? [];
+      items.push(prediction);
+      byType.set(prediction.tipo, items);
+    }
+    const typeSummaries: UsefulLifeTypeSummary[] = [...byType]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([tipo, items]) => {
+        const available = items.filter(isAvailablePrediction);
+        const remaining = available.map(item => item.mesesRemanescentesEstimados);
+        const confidence = available.map(item => item.confiabilidade);
+        const medianRemaining = median(remaining);
+        const sourceItems = equipment.filter(item => item.tipo === tipo);
+        const failures = sourceItems.flatMap(item => item.falhas);
+        const failuresBySeverity = [...failures.reduce((counts, failure) => {
+          counts.set(failure.severidade, (counts.get(failure.severidade) ?? 0) + 1);
+          return counts;
+        }, new Map<string, number>())]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([severidade, quantidade]) => ({ severidade, quantidade }));
+        const failuresByCategory = [...failures.reduce((counts, failure) => {
+          counts.set(failure.categoria, (counts.get(failure.categoria) ?? 0) + 1);
+          return counts;
+        }, new Map<string, number>())]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([categoria, quantidade]) => ({ categoria, quantidade }));
+        const latestFailure = failures.reduce<Date | null>(
+          (latest, failure) => !latest || failure.ocorridoEm > latest ? failure.ocorridoEm : latest,
+          null,
+        );
+        return {
+          tipo,
+          equipamentosAnalisados: items.length,
+          previsoesDisponiveis: available.length,
+          previsoesIndisponiveis: items.length - available.length,
+          vidaUtilRemanescenteMediaMeses: remaining.length
+            ? round(remaining.reduce((sum, value) => sum + value, 0) / remaining.length, 1)
+            : null,
+          vidaUtilRemanescenteMedianaMeses: medianRemaining === null ? null : round(medianRemaining, 1),
+          observacoesHistoricas: items.reduce((sum, item) => sum + item.observacoes, 0),
+          falhasObservadas: failures.length,
+          falhasNaoResolvidas: failures.filter(failure => failure.resolvidaEm === null).length,
+          falhasPorCategoria: failuresByCategory,
+          falhasPorSeveridade: failuresBySeverity,
+          ultimaFalhaEm: latestFailure?.toISOString() ?? null,
+          confiabilidadeMedia: confidence.length
+            ? round(confidence.reduce((sum, value) => sum + value, 0) / confidence.length, 4)
+            : null,
+        };
+      });
     const result: UsefulLifeAnalysisResult = {
       equipamentosAnalisados: predictions.length,
       previsoesDisponiveis: valid.length,
       previsoesIndisponiveis: predictions.length - valid.length,
       vidaUtilRemanescenteMediaMeses: valid.length ? round(valid.reduce((sum: number, item: AvailableLifePrediction) => sum + item.mesesRemanescentesEstimados, 0) / valid.length, 1) : null,
       confiabilidadeMedia: valid.length ? round(valid.reduce((sum: number, item: AvailableLifePrediction) => sum + item.confiabilidade, 0) / valid.length, 4) : null,
+      previsoesPorTipo: typeSummaries,
       previsoes: predictions,
-      limitacao: "Previsões dependem de avaliações válidas e não futuras. Exige no mínimo três observações em datas distintas, tendência negativa e R² mínimo de 0,35; equipamento já INSERVIVEL ou projeção cujo limite tenha sido ultrapassado não recebe previsão futura. O resultado é estimativo, não uma garantia de falha.",
+      limitacao: "Previsões dependem de avaliações válidas e não futuras. Exige no mínimo três observações em datas distintas, tendência negativa e R² mínimo de 0,35; equipamento já INSERVIVEL ou projeção cujo limite tenha sido ultrapassado não recebe previsão futura. O modelo mantém a penalização original por quantidade de falhas (0,06 por falha, limitada a 0,5). O histórico também contém data, categoria, severidade e data de resolução; a consolidação apresenta contagens por categoria/severidade, falhas não resolvidas e data da última falha como contexto, mas esses atributos não alteram a previsão nem introduzem pesos não validados. O resultado é estimativo, não uma garantia de falha.",
     };
     await this.repo.saveRun({
       tipo: "VIDA_UTIL_REMANESCENTE",
       organizacaoId: filters.organizacaoId ?? null,
-      metodo: "Regressão linear OLS + ajuste por estado, falhas e manutenção",
-      versaoModelo: "1.0.0",
+      metodo: "Regressão linear OLS + ajuste por estado, quantidade de falhas e manutenção; severidade e resolução são reportadas como contexto sem alterar os pesos",
+      versaoModelo: "1.1.0",
       filtros: { ...filters },
       resultado: result,
       observacoes: valid.length,

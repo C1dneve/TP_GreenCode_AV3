@@ -41,6 +41,28 @@ jobs:
       - run: npm run db:seed
       - run: npm run db:seed
       - run: npm test
+      - name: Demonstrative scenarios and report
+        id: demonstracao
+        run: npm run test:demonstracao
+      - name: Check whether this run generated fresh evidence
+        id: evidencia
+        if: always()
+        shell: bash
+        run: |
+          if git diff --quiet -- docs/evidencias-testes-av3.md; then
+            echo "generated=false" >> "$GITHUB_OUTPUT"
+            echo "No new demonstration report was generated in this run."
+          else
+            echo "generated=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload demonstrative evidence
+        if: ${{ always() && steps.evidencia.outputs.generated == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: greencode-av3-evidencias-demonstracao
+          path: docs/evidencias-testes-av3.md
+          if-no-files-found: error
+          retention-days: 14
       - run: npm run test:integration
 
   docker-compose-smoke:
