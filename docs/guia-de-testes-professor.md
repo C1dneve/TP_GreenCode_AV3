@@ -41,6 +41,66 @@ if [ ! -f .env ]; then cp .env.example .env; fi
 
 Não copie o `.env.example` por cima de um `.env` já configurado: isso pode substituir as credenciais locais existentes.
 
+### Isolar esta cópia do projeto no Docker
+
+O Docker Compose usa o nome do diretório como nome do projeto quando nenhum nome é informado. Como os volumes persistem mesmo depois que os containers são removidos, outro clone com o mesmo nome de pasta pode reutilizar um PostgreSQL inicializado anteriormente com outra senha. Para evitar esse conflito, cada cópia local deve receber um `COMPOSE_PROJECT_NAME` exclusivo. O nome é gravado no `.env` e permanece estável nas próximas inicializações.
+
+Se você já executou esta cópia com Compose antes de configurar `COMPOSE_PROJECT_NAME`, pare primeiro os containers do projeto antigo com `docker compose down`. Esse comando remove containers e rede, mas preserva os volumes. Não use `-v`. Em um clone realmente novo, sem containers anteriores, pule esta etapa.
+
+**Windows (PowerShell):**
+
+```powershell
+Remove-Item Env:COMPOSE_PROJECT_NAME -ErrorAction SilentlyContinue
+$envLines = @(Get-Content .\.env)
+$projectLine = $envLines | Where-Object { $_ -match '^COMPOSE_PROJECT_NAME=' } | Select-Object -First 1
+if (-not $projectLine) {
+    $envLines += 'COMPOSE_PROJECT_NAME=greencode-local'
+    $currentProject = 'greencode-local'
+} else {
+    $currentProject = $projectLine -replace '^COMPOSE_PROJECT_NAME=', ''
+    if ([string]::IsNullOrWhiteSpace($currentProject)) {
+        $currentProject = 'greencode-local'
+        $envLines = $envLines -replace '^COMPOSE_PROJECT_NAME=.*$', 'COMPOSE_PROJECT_NAME=greencode-local'
+    }
+}
+
+if ($currentProject -eq 'greencode-local') {
+    $suffix = [Guid]::NewGuid().ToString('N').Substring(0, 12)
+    $projectName = "greencode-$suffix"
+    $envLines = $envLines -replace '^COMPOSE_PROJECT_NAME=.*$', "COMPOSE_PROJECT_NAME=$projectName"
+    Set-Content -Path .\.env -Value $envLines -Encoding ascii
+    Write-Host "Projeto Docker isolado configurado: $projectName"
+} else {
+    Write-Host "Projeto Docker já configurado; nome preservado: $currentProject"
+}
+```
+
+**Ubuntu (Bash):**
+
+```bash
+set -eu
+unset COMPOSE_PROJECT_NAME
+current_project="$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' .env | head -n 1)"
+if [ -z "$current_project" ]; then
+  if grep -q '^COMPOSE_PROJECT_NAME=' .env; then
+    sed -i 's/^COMPOSE_PROJECT_NAME=.*/COMPOSE_PROJECT_NAME=greencode-local/' .env
+  else
+    printf '\nCOMPOSE_PROJECT_NAME=greencode-local\n' >> .env
+  fi
+  current_project='greencode-local'
+fi
+if [ "$current_project" = 'greencode-local' ]; then
+  suffix="$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
+  project_name="greencode-$suffix"
+  sed -i "s|^COMPOSE_PROJECT_NAME=.*|COMPOSE_PROJECT_NAME=$project_name|" .env
+  echo "Projeto Docker isolado configurado: $project_name"
+else
+  echo "Projeto Docker já configurado; nome preservado: $current_project"
+fi
+```
+
+O Compose utiliza `COMPOSE_PROJECT_NAME` para nomear e isolar containers, redes e volumes. Assim, dois clones não compartilham automaticamente o mesmo volume PostgreSQL, mesmo que ambos estejam em diretórios chamados `TP_GreenCode_AV3`. Não altere esse nome depois que o volume local for criado, a menos que queira iniciar outro ambiente isolado.
+
 ### Configurar o Compose com um PostgreSQL criado pelo próprio Compose
 
 Edite `.env` e defina:
@@ -51,7 +111,7 @@ Edite `.env` e defina:
 - `JWT_SECRET`: segredo aleatório com pelo menos 32 bytes.
 - `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_NAME` e `BOOTSTRAP_ADMIN_PASSWORD`: credenciais do administrador inicial. A senha deve ter pelo menos 12 caracteres.
 
-O Compose entrega `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB` tanto ao PostgreSQL quanto à API e ao worker. No início de cada processo, API e worker montam `DATABASE_URL` dentro do próprio container a partir dessas três variáveis e do host interno `postgres:5432`. Assim, ambos utilizam exatamente a mesma fonte de credenciais do banco. A `DATABASE_URL` do `.env` fica reservada aos comandos Prisma executados diretamente no host. Para evitar problemas com caracteres reservados de URL (`@`, `:`, `/`, `#`, `%`, `?`), prefira uma senha hexadecimal aleatória, por exemplo, gerada com 32 bytes. Use a mesma senha em `POSTGRES_PASSWORD` e na `DATABASE_URL` do host.
+O Compose entrega `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB` ao PostgreSQL e interpola diretamente uma `DATABASE_URL` para API e worker usando exatamente os mesmos valores e o host interno `postgres:5432`. O `test-runner` recebe uma URL equivalente apontando para `postgres-test:5432/greencode_test`. Não há montagem de URL por expansão de shell durante o startup. A `DATABASE_URL` do `.env` fica reservada aos comandos Prisma executados diretamente no host. Para evitar problemas com caracteres reservados de URL (`@`, `:`, `/`, `#`, `%`, `?`), prefira uma senha hexadecimal aleatória, por exemplo, gerada com 32 bytes. Use a mesma senha em `POSTGRES_PASSWORD` e na `DATABASE_URL` do host.
 
 **PowerShell — gerar uma senha hexadecimal somente quando o `.env` ainda contém o placeholder:**
 
@@ -101,9 +161,9 @@ else
 fi
 ```
 
-O Compose desta versão usa o volume `greencode_pgdata_v3`. Ele é criado automaticamente na primeira inicialização desta configuração. Um volume `greencode_pgdata` de versões anteriores não é reutilizado nem apagado: permanece guardado no Docker, preservando os dados anteriores. Isso evita que uma senha recém-gerada seja comparada com a senha antiga armazenada em um volume de outra configuração.
+O Compose desta versão usa o volume `greencode_pgdata_v3`, com o prefixo do `COMPOSE_PROJECT_NAME` exclusivo desta cópia. O volume é criado automaticamente na primeira inicialização. Clones diferentes recebem nomes de projeto diferentes e, por isso, não reutilizam o mesmo volume por compartilharem apenas o nome do diretório. Volumes anteriores não são apagados: permanecem guardados no Docker, preservando os dados existentes.
 
-**Importante:** mantenha o mesmo `.env` enquanto reutilizar `greencode_pgdata_v3`. Não gere outra `POSTGRES_PASSWORD` a cada inicialização. As variáveis `POSTGRES_*` inicializam o banco somente quando o volume está vazio; elas não redefinem a role de um volume já criado. Se o volume `greencode_pgdata_v3` já existir, a senha do `.env` precisa continuar sendo a mesma usada quando ele foi inicializado.
+**Importante:** mantenha o mesmo `.env` enquanto reutilizar `greencode_pgdata_v3`. Não gere outra `POSTGRES_PASSWORD` a cada inicialização. As variáveis `POSTGRES_*` inicializam o banco somente quando o volume está vazio; elas não redefinem a role de um volume já criado. Se o volume deste projeto já existir, a senha do `.env` precisa continuar sendo a mesma usada quando ele foi inicializado. Remover somente containers não remove volumes. Um clone novo deve gerar um `COMPOSE_PROJECT_NAME` novo antes de executar os comandos Compose; isso cria outro namespace sem apagar os dados anteriores.
 
 ### Gerar um segredo JWT aleatório
 
@@ -122,6 +182,7 @@ if ($currentJwt -eq 'replace-with-a-random-secret-at-least-32-bytes-long') {
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
     $jwtSecret = ([BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant()
+    # Replace the line before writing; merely creating $jwtSecret does not update .env.
     $envLines = $envLines -replace '^JWT_SECRET=.*$', "JWT_SECRET=$jwtSecret"
     Set-Content -Path .\.env -Value $envLines -Encoding ascii
     Remove-Variable jwtSecret, bytes
@@ -170,11 +231,11 @@ docker compose logs --tail=120 api
 docker compose logs --tail=80 worker
 ```
 
-A API e o worker recebem as mesmas variáveis `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB` do container PostgreSQL. Cada processo constrói sua `DATABASE_URL` internamente no momento da inicialização. A URL `127.0.0.1:5433` do `.env` não é usada por processos dentro dos containers.
+A API e o worker recebem `DATABASE_URL` diretamente em `environment`, interpolada pelo Compose com os mesmos valores de `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB` usados no serviço PostgreSQL. O `test-runner` recebe a URL do banco `greencode_test` com `postgres-test:5432`. A URL `127.0.0.1:5433` do `.env` não é usada por processos dentro dos containers.
 
 A API executa `prisma migrate deploy` e o seed idempotente antes de iniciar o Fastify. O log deve apresentar `GreenCode API iniciada`; no `docker compose ps`, o serviço `api` deve ficar `healthy`. O worker é um processo separado e depende da API saudável, do PostgreSQL e do Redis saudáveis. Essa ordem impede que consulte a tabela Outbox antes de as migrations terminarem.
 
-Na atualização desta configuração, o Compose passa a usar `greencode_pgdata_v3` em vez dos volumes anteriores `greencode_pgdata` e `greencode_pgdata_v2`. O volume anterior não é apagado; o novo é inicializado usando as credenciais atuais do `.env`. Assim, uma senha criada para esta avaliação não é confrontada com uma senha armazenada por uma execução anterior. O volume novo começa com um banco vazio: os dados do volume antigo permanecem preservados no Docker, mas não são copiados automaticamente para o novo banco. Preserve o `.env` depois da primeira inicialização para manter as credenciais sincronizadas com o volume novo.
+O nome real do volume é composto pelo `COMPOSE_PROJECT_NAME` e pela chave `greencode_pgdata_v3`. Como o guia gera um nome exclusivo para cada clone, um novo checkout cria um volume próprio, mesmo quando o diretório também se chama `TP_GreenCode_AV3`. Volumes de outros clones permanecem intactos e não são reutilizados. O novo banco começa vazio; os dados de outros volumes não são copiados automaticamente. Preserve o `.env` e, principalmente, o `COMPOSE_PROJECT_NAME` depois da primeira inicialização.
 
 Para acompanhar os logs continuamente, abra terminais separados:
 
@@ -192,7 +253,7 @@ Não considere a imagem construída como prova de que a API está pronta: a inic
 
 **Erro Prisma `P1000` — falha de autenticação:** a API alcançou o PostgreSQL, mas usuário/senha não foram aceitos. Confira `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB` no `.env`. No Compose, o destino mostrado no log da API deve ser `postgres:5432`; a `DATABASE_URL` com `127.0.0.1:5433` é reservada para comandos executados no host.
 
-Esta versão usa o volume novo `greencode_pgdata_v3`, separado dos volumes `greencode_pgdata` e `greencode_pgdata_v2` usados por versões anteriores. Se você atualizou o projeto, o Compose deve criar esse volume novo sem apagar o antigo. Confirme `docker compose ps`: `postgres` precisa ficar `healthy`. O health check agora valida também uma autenticação real com a senha configurada. Se continuar `unhealthy`, confira se o `.env` está na raiz do projeto e se `POSTGRES_PASSWORD` não foi alterada depois da primeira inicialização de `greencode_pgdata_v3`. Não gere uma nova senha em cada execução e não use `docker compose down -v` como procedimento normal de inicialização.
+Cada cópia do projeto deve ter seu próprio `COMPOSE_PROJECT_NAME`, gerado na subseção de isolamento antes de qualquer comando Compose. Se você removeu containers ou clonou novamente o repositório, isso não significa que os volumes foram removidos: sem um nome de projeto exclusivo, o Compose pode reutilizar um volume antigo. O nome exclusivo cria um namespace distinto para `greencode_pgdata_v3`; um novo clone não reutiliza o volume de outro clone. Confirme `docker compose ps`: `postgres` precisa ficar `healthy`. O health check valida uma autenticação real usando a senha configurada. Preserve o `.env` e o nome do projeto depois da primeira inicialização. Não gere uma nova senha nem altere `COMPOSE_PROJECT_NAME` enquanto reutilizar o mesmo volume. Não use `docker compose down -v` como procedimento normal de inicialização.
 
 **Erro Prisma `P1001` ou conexão recusada:** confira se o container `postgres` está `healthy`, se a API está usando o host interno `postgres:5432` e se os containers estão na mesma rede Compose. `127.0.0.1` dentro de um container aponta para o próprio container, não para o host Windows nem para o serviço PostgreSQL.
 

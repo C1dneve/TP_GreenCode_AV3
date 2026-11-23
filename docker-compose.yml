@@ -49,12 +49,12 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 3000
-      # A API monta DATABASE_URL no próprio container a partir destas mesmas
-      # credenciais usadas pelo serviço postgres. Isso evita divergência entre
-      # a senha inicializada no volume e a senha embutida na URL.
+      # Compose interpolates this URL directly from the same .env values used
+      # by the postgres service; no shell-time password expansion is required.
       POSTGRES_USER: ${POSTGRES_USER:-greencode}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}
       POSTGRES_DB: ${POSTGRES_DB:-greencode}
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-greencode}:${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}@postgres:5432/${POSTGRES_DB:-greencode}?schema=public"
       JWT_SECRET: ${JWT_SECRET:?Configure JWT_SECRET no arquivo .env}
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:?Configure BOOTSTRAP_ADMIN_USERNAME no arquivo .env}
       BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:?Configure BOOTSTRAP_ADMIN_NAME no arquivo .env}
@@ -65,7 +65,6 @@ services:
       - sh
       - -c
       - >-
-        export DATABASE_URL="postgresql://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@postgres:5432/$${POSTGRES_DB}?schema=public" &&
         npm run db:deploy &&
         npm run db:seed:generated &&
         exec node dist/src/server.js
@@ -83,12 +82,7 @@ services:
   worker:
     build: .
     restart: unless-stopped
-    command:
-      - sh
-      - -c
-      - >-
-        export DATABASE_URL="postgresql://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@postgres:5432/$${POSTGRES_DB}?schema=public" &&
-        exec npm run worker
+    command: ["npm", "run", "worker"]
     depends_on:
       api:
         condition: service_healthy
@@ -101,6 +95,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-greencode}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}
       POSTGRES_DB: ${POSTGRES_DB:-greencode}
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-greencode}:${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}@postgres:5432/${POSTGRES_DB:-greencode}?schema=public"
       JWT_SECRET: ${JWT_SECRET:?Configure JWT_SECRET no arquivo .env}
       REDIS_URL: redis://redis:6379
       REPORTS_DIR: /app/storage/reports
@@ -157,6 +152,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-greencode}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}
       POSTGRES_DB: greencode_test
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-greencode}:${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}@postgres-test:5432/greencode_test?schema=public"
       JWT_SECRET: ${JWT_SECRET:?Configure JWT_SECRET no arquivo .env}
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:?Configure BOOTSTRAP_ADMIN_USERNAME no arquivo .env}
       BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:?Configure BOOTSTRAP_ADMIN_NAME no arquivo .env}
@@ -167,7 +163,6 @@ services:
       - sh
       - -c
       - >-
-        export DATABASE_URL="postgresql://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@postgres-test:5432/greencode_test?schema=public" &&
         npm run db:deploy &&
         npm run db:seed:generated &&
         npm run test:integration:dist
