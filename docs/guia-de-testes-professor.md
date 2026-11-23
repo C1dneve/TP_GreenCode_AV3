@@ -16,10 +16,10 @@ O projeto possui dois modos de conexão. É importante não misturar as URLs dos
 
 | Modo | Banco usado pela API | Redis usado pelo worker |
 |---|---|---|
-| Docker Compose | Serviço Compose `postgres`, porta interna `5432` | Serviço Compose `redis`, porta interna `6379` |
-| API/worker no host | `DATABASE_URL` do `.env` | `REDIS_URL` do `.env` |
+| Docker Compose | Serviço Compose `postgres`, porta interna `5432` | Serviço Compose `redis`, porta interna `6379` (não publicada no host) |
+| API/worker no host | `DATABASE_URL` do `.env` | `REDIS_URL` do `.env`, apontando para um Redis acessível pelo host |
 
-**Atenção ao comportamento atual do `docker-compose.yml`:** quando `api`, `worker` e `test-runner` são executados em containers, o Compose monta as URLs de conexão com base em `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB`. A API usa `postgres:5432`; o worker usa `postgres:5432` e `redis:6379`. Portanto, nesses containers, a variável `DATABASE_URL` do `.env` — que aponta para `127.0.0.1:5433` — não seleciona um banco externo. Ela serve para comandos Prisma executados diretamente no Windows/Linux host. Da mesma forma, o `REDIS_URL` do `.env` é usado na execução local do worker; no Compose, o worker recebe `redis://redis:6379`.
+**Atenção ao comportamento atual do `docker-compose.yml`:** quando `api`, `worker` e `test-runner` são executados em containers, o Compose monta as URLs de conexão com base em `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB`. A API usa `postgres:5432`; o worker usa `postgres:5432` e `redis:6379`. O Redis do Compose não publica a porta `6379` no host, pois os serviços se comunicam pela rede interna do Compose. Isso evita conflito com um Redis local ou com outro clone do projeto. Portanto, nesses containers, a variável `DATABASE_URL` do `.env` — que aponta para `127.0.0.1:5433` — não seleciona um banco externo. Ela serve para comandos Prisma executados diretamente no Windows/Linux host. Da mesma forma, o `REDIS_URL` do `.env` é usado somente na execução local do worker; no Compose, o worker recebe `redis://redis:6379`.
 
 Se a avaliação utilizar outro PostgreSQL externo, siga a subseção **Executar usando banco externo** mais abaixo. Não execute `docker compose up` esperando que a API dentro do container utilize automaticamente a `DATABASE_URL` externa: a configuração Compose atual não faz esse redirecionamento.
 
@@ -220,7 +220,7 @@ docker compose up -d --wait --wait-timeout 120 postgres redis
 docker compose ps
 ```
 
-Confirme que `postgres` e `redis` aparecem como `healthy`. O health check do PostgreSQL executa uma consulta autenticada com as mesmas credenciais configuradas para a API; portanto, `healthy` confirma não apenas que o processo está ativo, mas também que a senha do `.env` foi aceita.
+Confirme que `postgres` e `redis` aparecem como `healthy`. O Redis não mostrará uma porta publicada em `PORTS`; isso é intencional, pois API e worker usam `redis:6379` pela rede interna. O health check do PostgreSQL executa uma consulta autenticada com as mesmas credenciais configuradas para a API; portanto, `healthy` confirma não apenas que o processo está ativo, mas também que a senha do `.env` foi aceita.
 
 Em seguida, construa e inicie API e worker. O Compose inicia a API somente depois do PostgreSQL saudável e inicia o worker somente depois da API, PostgreSQL e Redis estarem saudáveis:
 
@@ -256,6 +256,8 @@ Não considere a imagem construída como prova de que a API está pronta: a inic
 Cada cópia do projeto deve ter seu próprio `COMPOSE_PROJECT_NAME`, gerado na subseção de isolamento antes de qualquer comando Compose. Se você removeu containers ou clonou novamente o repositório, isso não significa que os volumes foram removidos: sem um nome de projeto exclusivo, o Compose pode reutilizar um volume antigo. O nome exclusivo cria um namespace distinto para `greencode_pgdata_v3`; um novo clone não reutiliza o volume de outro clone. Confirme `docker compose ps`: `postgres` precisa ficar `healthy`. O health check valida uma autenticação real usando a senha configurada. Preserve o `.env` e o nome do projeto depois da primeira inicialização. Não gere uma nova senha nem altere `COMPOSE_PROJECT_NAME` enquanto reutilizar o mesmo volume. Não use `docker compose down -v` como procedimento normal de inicialização.
 
 **Erro Prisma `P1001` ou conexão recusada:** confira se o container `postgres` está `healthy`, se a API está usando o host interno `postgres:5432` e se os containers estão na mesma rede Compose. `127.0.0.1` dentro de um container aponta para o próprio container, não para o host Windows nem para o serviço PostgreSQL.
+
+**Erro Docker `ports are not available` na porta `6379`:** o Redis usado pelo Compose não precisa publicar uma porta no Windows/Linux host. A configuração do projeto deixa o Redis acessível apenas pela rede interna, em `redis:6379`, para API e worker. Se você executar a aplicação diretamente no host, configure `REDIS_URL` para uma instância Redis 7 acessível pelo host; não use a instância interna do Compose, cuja porta não é publicada.
 
 Para consultar os estados e logs sem exibir o conteúdo do `.env`:
 
