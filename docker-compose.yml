@@ -9,9 +9,18 @@ services:
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
-      - greencode_pgdata:/var/lib/postgresql/data
+      # Volume versionado para não reutilizar dados de configurações anteriores
+      # cujo usuário/senha podem não corresponder ao .env atual. O volume antigo
+      # permanece intacto no Docker e não é removido automaticamente.
+      - greencode_pgdata_v3:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      # Diferente de pg_isready, este teste também valida autenticação TCP com
+      # as credenciais que a API usará nas migrations.
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$${POSTGRES_PASSWORD}" psql -w -h 127.0.0.1
+          -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -tAc 'SELECT 1' >/dev/null
       interval: 5s
       timeout: 3s
       retries: 15
@@ -40,13 +49,26 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 3000
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-greencode}:${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}@postgres:5432/${POSTGRES_DB:-greencode}?schema=public"
+      # A API monta DATABASE_URL no próprio container a partir destas mesmas
+      # credenciais usadas pelo serviço postgres. Isso evita divergência entre
+      # a senha inicializada no volume e a senha embutida na URL.
+      POSTGRES_USER: ${POSTGRES_USER:-greencode}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}
+      POSTGRES_DB: ${POSTGRES_DB:-greencode}
       JWT_SECRET: ${JWT_SECRET:?Configure JWT_SECRET no arquivo .env}
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:?Configure BOOTSTRAP_ADMIN_USERNAME no arquivo .env}
       BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:?Configure BOOTSTRAP_ADMIN_NAME no arquivo .env}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Configure BOOTSTRAP_ADMIN_PASSWORD no arquivo .env}
       REPORTS_DIR: /app/storage/reports
       REPORT_EXPIRATION_DAYS: ${REPORT_EXPIRATION_DAYS:-7}
+    command:
+      - sh
+      - -c
+      - >-
+        export DATABASE_URL="postgresql://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@postgres:5432/$${POSTGRES_DB}?schema=public" &&
+        npm run db:deploy &&
+        npm run db:seed:generated &&
+        exec node dist/src/server.js
     volumes:
       - greencode_reports:/app/storage/reports
     ports:
@@ -61,15 +83,24 @@ services:
   worker:
     build: .
     restart: unless-stopped
-    command: ["npm", "run", "worker"]
+    command:
+      - sh
+      - -c
+      - >-
+        export DATABASE_URL="postgresql://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@postgres:5432/$${POSTGRES_DB}?schema=public" &&
+        exec npm run worker
     depends_on:
+      api:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-greencode}:${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}@postgres:5432/${POSTGRES_DB:-greencode}?schema=public"
+      POSTGRES_USER: ${POSTGRES_USER:-greencode}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}
+      POSTGRES_DB: ${POSTGRES_DB:-greencode}
       JWT_SECRET: ${JWT_SECRET:?Configure JWT_SECRET no arquivo .env}
       REDIS_URL: redis://redis:6379
       REPORTS_DIR: /app/storage/reports
@@ -90,9 +121,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}
       POSTGRES_DB: greencode_test
     volumes:
-      - greencode_test_pgdata:/var/lib/postgresql/data
+      - greencode_test_pgdata_v3:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$${POSTGRES_PASSWORD}" psql -w -h 127.0.0.1
+          -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -tAc 'SELECT 1' >/dev/null
       interval: 5s
       timeout: 3s
       retries: 15
@@ -119,17 +154,26 @@ services:
       NODE_ENV: test
       HOST: 127.0.0.1
       PORT: 3000
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-greencode}:${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}@postgres-test:5432/greencode_test?schema=public"
+      POSTGRES_USER: ${POSTGRES_USER:-greencode}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD no arquivo .env}
+      POSTGRES_DB: greencode_test
       JWT_SECRET: ${JWT_SECRET:?Configure JWT_SECRET no arquivo .env}
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:?Configure BOOTSTRAP_ADMIN_USERNAME no arquivo .env}
       BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:?Configure BOOTSTRAP_ADMIN_NAME no arquivo .env}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Configure BOOTSTRAP_ADMIN_PASSWORD no arquivo .env}
       REDIS_URL: redis://redis-test:6379
       REPORTS_DIR: /app/storage/reports
-    command: ["sh", "-c", "npm run db:deploy && npm run db:seed:generated && npm run test:integration:dist"]
+    command:
+      - sh
+      - -c
+      - >-
+        export DATABASE_URL="postgresql://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@postgres-test:5432/greencode_test?schema=public" &&
+        npm run db:deploy &&
+        npm run db:seed:generated &&
+        npm run test:integration:dist
 
 volumes:
-  greencode_pgdata:
-  greencode_test_pgdata:
+  greencode_pgdata_v3:
+  greencode_test_pgdata_v3:
   greencode_redisdata:
   greencode_reports:

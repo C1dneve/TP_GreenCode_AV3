@@ -6,11 +6,26 @@ Este roteiro permite iniciar o GreenCode, autenticar como administrador, configu
 
 ### Requisitos
 
-A execução recomendada usa Docker Desktop no Windows ou Docker Engine com o plugin Docker Compose em Linux. Node.js, PostgreSQL e Redis não precisam estar instalados diretamente no host quando a aplicação é executada em containers. Para executar npm no host, utilize Node.js 24.x, PostgreSQL 17 e Redis 7.
+A execução recomendada para a avaliação usa Docker Desktop no Windows ou Docker Engine com o plugin Docker Compose em Linux. Nesse modo, PostgreSQL 17 e Redis 7 são iniciados em containers e não precisam estar instalados diretamente no host.
 
-### Configurar variáveis locais
+Para executar a API e o worker diretamente no host, utilize Node.js 24.x, PostgreSQL 17 e Redis 7 acessíveis pela máquina. Esse segundo modo é o indicado quando a avaliação precisa utilizar um banco PostgreSQL externo ou diferente do banco criado pelo Compose.
 
-Na raiz do projeto, copie o modelo de ambiente:
+### Escolher o modo de execução
+
+O projeto possui dois modos de conexão. É importante não misturar as URLs dos dois modos:
+
+| Modo | Banco usado pela API | Redis usado pelo worker |
+|---|---|---|
+| Docker Compose | Serviço Compose `postgres`, porta interna `5432` | Serviço Compose `redis`, porta interna `6379` |
+| API/worker no host | `DATABASE_URL` do `.env` | `REDIS_URL` do `.env` |
+
+**Atenção ao comportamento atual do `docker-compose.yml`:** quando `api`, `worker` e `test-runner` são executados em containers, o Compose monta as URLs de conexão com base em `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB`. A API usa `postgres:5432`; o worker usa `postgres:5432` e `redis:6379`. Portanto, nesses containers, a variável `DATABASE_URL` do `.env` — que aponta para `127.0.0.1:5433` — não seleciona um banco externo. Ela serve para comandos Prisma executados diretamente no Windows/Linux host. Da mesma forma, o `REDIS_URL` do `.env` é usado na execução local do worker; no Compose, o worker recebe `redis://redis:6379`.
+
+Se a avaliação utilizar outro PostgreSQL externo, siga a subseção **Executar usando banco externo** mais abaixo. Não execute `docker compose up` esperando que a API dentro do container utilize automaticamente a `DATABASE_URL` externa: a configuração Compose atual não faz esse redirecionamento.
+
+### Criar o arquivo de ambiente
+
+Na raiz do projeto, copie o modelo apenas quando ainda não existir um `.env`:
 
 **PowerShell**
 
@@ -21,34 +36,205 @@ if (-not (Test-Path .\.env)) { Copy-Item .env.example .env }
 **Bash**
 
 ```bash
-cp .env.example .env
+if [ ! -f .env ]; then cp .env.example .env; fi
 ```
 
-Edite `.env` e substitua ao menos `POSTGRES_PASSWORD`, `JWT_SECRET`, `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_NAME` e `BOOTSTRAP_ADMIN_PASSWORD`. A senha administrativa deve respeitar o tamanho mínimo esperado pela aplicação. Use valores locais de avaliação; não reutilize credenciais pessoais ou de produção e não envie o arquivo `.env` para o repositório.
+Não copie o `.env.example` por cima de um `.env` já configurado: isso pode substituir as credenciais locais existentes.
 
-Gere `JWT_SECRET` aleatório. Em Bash, por exemplo:
+### Configurar o Compose com um PostgreSQL criado pelo próprio Compose
 
-```bash
-openssl rand -hex 32
+Edite `.env` e defina:
+
+- `POSTGRES_USER`: usuário que será criado no container PostgreSQL na primeira inicialização do volume.
+- `POSTGRES_PASSWORD`: senha desse usuário.
+- `POSTGRES_DB`: banco criado na primeira inicialização.
+- `JWT_SECRET`: segredo aleatório com pelo menos 32 bytes.
+- `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_NAME` e `BOOTSTRAP_ADMIN_PASSWORD`: credenciais do administrador inicial. A senha deve ter pelo menos 12 caracteres.
+
+O Compose entrega `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB` tanto ao PostgreSQL quanto à API e ao worker. No início de cada processo, API e worker montam `DATABASE_URL` dentro do próprio container a partir dessas três variáveis e do host interno `postgres:5432`. Assim, ambos utilizam exatamente a mesma fonte de credenciais do banco. A `DATABASE_URL` do `.env` fica reservada aos comandos Prisma executados diretamente no host. Para evitar problemas com caracteres reservados de URL (`@`, `:`, `/`, `#`, `%`, `?`), prefira uma senha hexadecimal aleatória, por exemplo, gerada com 32 bytes. Use a mesma senha em `POSTGRES_PASSWORD` e na `DATABASE_URL` do host.
+
+**PowerShell — gerar uma senha hexadecimal somente quando o `.env` ainda contém o placeholder:**
+
+```powershell
+$envLines = Get-Content .\.env
+$pgPasswordLine = $envLines | Where-Object { $_ -match '^POSTGRES_PASSWORD=' } | Select-Object -First 1
+if (-not $pgPasswordLine) { throw 'A linha POSTGRES_PASSWORD não foi encontrada no .env.' }
+$currentPassword = $pgPasswordLine -replace '^POSTGRES_PASSWORD=', ''
+
+if ($currentPassword -eq 'replace-with-a-local-database-password') {
+    $pgBytes = New-Object byte[] 32
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($pgBytes) } finally { $rng.Dispose() }
+    $pgPassword = ([BitConverter]::ToString($pgBytes) -replace '-', '').ToLowerInvariant()
+
+    $pgUser = (($envLines | Where-Object { $_ -match '^POSTGRES_USER=' } | Select-Object -First 1) -replace '^POSTGRES_USER=', '').Trim()
+    $pgDb = (($envLines | Where-Object { $_ -match '^POSTGRES_DB=' } | Select-Object -First 1) -replace '^POSTGRES_DB=', '').Trim()
+    if (-not $pgUser -or -not $pgDb) { throw 'POSTGRES_USER e POSTGRES_DB precisam estar definidos no .env.' }
+    if (-not ($envLines | Where-Object { $_ -match '^DATABASE_URL=' })) { throw 'A linha DATABASE_URL não foi encontrada no .env.' }
+
+    $envLines = $envLines -replace '^POSTGRES_PASSWORD=.*$', "POSTGRES_PASSWORD=$pgPassword"
+    $envLines = $envLines -replace '^DATABASE_URL=.*$', ("DATABASE_URL=postgresql://{0}:{1}@127.0.0.1:5433/{2}?schema=public" -f $pgUser, $pgPassword, $pgDb)
+    Set-Content -Path .\.env -Value $envLines -Encoding ascii
+    Remove-Variable pgPassword, pgBytes
+    Write-Host 'Senha PostgreSQL gerada e gravada. Guarde o .env e não gere outra senha nas próximas inicializações.'
+} else {
+    Write-Host 'POSTGRES_PASSWORD já está configurada; valor preservado. Não gere outra senha para um volume existente.'
+}
 ```
 
-Copie o valor gerado para `JWT_SECRET`. A chave não deve ser publicada nem colada em evidências.
-
-### Validar e iniciar
+**Bash — gerar uma senha hexadecimal somente quando o `.env` ainda contém o placeholder:**
 
 ```bash
+set -eu
+current_password="$(sed -n 's/^POSTGRES_PASSWORD=//p' .env | head -n 1)"
+if [ "$current_password" = 'replace-with-a-local-database-password' ]; then
+  pg_password="$(openssl rand -hex 32)"
+  pg_user="$(sed -n 's/^POSTGRES_USER=//p' .env | head -n 1)"
+  pg_db="$(sed -n 's/^POSTGRES_DB=//p' .env | head -n 1)"
+  grep -q '^DATABASE_URL=' .env || { echo 'DATABASE_URL ausente.' >&2; exit 1; }
+  sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${pg_password}|" .env
+  sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgresql://${pg_user}:${pg_password}@127.0.0.1:5433/${pg_db}?schema=public|" .env
+  unset pg_password
+  echo 'Senha PostgreSQL gerada e gravada. Preserve o .env nas próximas inicializações.'
+else
+  echo 'POSTGRES_PASSWORD já está configurada; valor preservado. Não gere outra senha para um volume existente.'
+fi
+```
+
+O Compose desta versão usa o volume `greencode_pgdata_v3`. Ele é criado automaticamente na primeira inicialização desta configuração. Um volume `greencode_pgdata` de versões anteriores não é reutilizado nem apagado: permanece guardado no Docker, preservando os dados anteriores. Isso evita que uma senha recém-gerada seja comparada com a senha antiga armazenada em um volume de outra configuração.
+
+**Importante:** mantenha o mesmo `.env` enquanto reutilizar `greencode_pgdata_v3`. Não gere outra `POSTGRES_PASSWORD` a cada inicialização. As variáveis `POSTGRES_*` inicializam o banco somente quando o volume está vazio; elas não redefinem a role de um volume já criado. Se o volume `greencode_pgdata_v3` já existir, a senha do `.env` precisa continuar sendo a mesma usada quando ele foi inicializado.
+
+### Gerar um segredo JWT aleatório
+
+Gere 32 bytes aleatórios e grave o resultado hexadecimal em `JWT_SECRET`. Use apenas o bloco referente ao seu terminal. O comando PowerShell inclui a atribuição de `$jwtSecret`; execute o bloco completo, inclusive essa linha. Os comandos preservam os demais valores do `.env` e não exibem o segredo gerado.
+
+**Windows (PowerShell):**
+
+```powershell
+$envLines = Get-Content .\.env
+$jwtLine = $envLines | Where-Object { $_ -match '^JWT_SECRET=' } | Select-Object -First 1
+if (-not $jwtLine) { throw 'A linha JWT_SECRET não foi encontrada no .env.' }
+$currentJwt = $jwtLine -replace '^JWT_SECRET=', ''
+
+if ($currentJwt -eq 'replace-with-a-random-secret-at-least-32-bytes-long') {
+    $bytes = New-Object byte[] 32
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+    $jwtSecret = ([BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant()
+    $envLines = $envLines -replace '^JWT_SECRET=.*$', "JWT_SECRET=$jwtSecret"
+    Set-Content -Path .\.env -Value $envLines -Encoding ascii
+    Remove-Variable jwtSecret, bytes
+    Write-Host 'JWT_SECRET gerado e gravado; o valor não foi exibido.'
+} else {
+    Write-Host 'JWT_SECRET já está configurado; valor preservado.'
+}
+```
+
+**Ubuntu (Bash):**
+
+```bash
+set -eu
+current_jwt="$(sed -n 's/^JWT_SECRET=//p' .env | head -n 1)"
+if [ "$current_jwt" = 'replace-with-a-random-secret-at-least-32-bytes-long' ]; then
+  secret="$(openssl rand -hex 32)"
+  sed -i "s|^JWT_SECRET=.*|JWT_SECRET=${secret}|" .env
+  unset secret
+  echo 'JWT_SECRET gerado e gravado; o valor não foi exibido.'
+else
+  echo 'JWT_SECRET já está configurado; valor preservado.'
+fi
+```
+
+No Ubuntu, o comando usa `openssl`. Caso não esteja instalado, instale-o pelo gerenciador de pacotes da distribuição. O segredo é local: não o compartilhe nem o registre em capturas de tela. O arquivo `.env.example` deve conter apenas placeholders, nunca uma chave JWT fixa ou utilizada em ambiente real.
+
+### Validar e iniciar com Docker Compose
+
+Valide a configuração e inicie primeiro a infraestrutura. O primeiro comando cria o volume versionado `greencode_pgdata_v3` caso ainda não exista:
+
+```powershell
 docker compose config -q
 docker compose --profile tests config -q
-docker compose up --build -d
+docker compose up -d --wait --wait-timeout 120 postgres redis
 docker compose ps
 ```
 
-O serviço `api` aguarda o PostgreSQL saudável, aplica migrations e executa o seed antes de iniciar. O worker é um processo separado e depende do PostgreSQL e Redis. Verifique os logs em terminais separados:
+Confirme que `postgres` e `redis` aparecem como `healthy`. O health check do PostgreSQL executa uma consulta autenticada com as mesmas credenciais configuradas para a API; portanto, `healthy` confirma não apenas que o processo está ativo, mas também que a senha do `.env` foi aceita.
+
+Em seguida, construa e inicie API e worker. O Compose inicia a API somente depois do PostgreSQL saudável e inicia o worker somente depois da API, PostgreSQL e Redis estarem saudáveis:
+
+```powershell
+docker compose up --build -d --wait --wait-timeout 180 api worker
+docker compose ps
+docker compose logs --tail=120 api
+docker compose logs --tail=80 worker
+```
+
+A API e o worker recebem as mesmas variáveis `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB` do container PostgreSQL. Cada processo constrói sua `DATABASE_URL` internamente no momento da inicialização. A URL `127.0.0.1:5433` do `.env` não é usada por processos dentro dos containers.
+
+A API executa `prisma migrate deploy` e o seed idempotente antes de iniciar o Fastify. O log deve apresentar `GreenCode API iniciada`; no `docker compose ps`, o serviço `api` deve ficar `healthy`. O worker é um processo separado e depende da API saudável, do PostgreSQL e do Redis saudáveis. Essa ordem impede que consulte a tabela Outbox antes de as migrations terminarem.
+
+Na atualização desta configuração, o Compose passa a usar `greencode_pgdata_v3` em vez dos volumes anteriores `greencode_pgdata` e `greencode_pgdata_v2`. O volume anterior não é apagado; o novo é inicializado usando as credenciais atuais do `.env`. Assim, uma senha criada para esta avaliação não é confrontada com uma senha armazenada por uma execução anterior. O volume novo começa com um banco vazio: os dados do volume antigo permanecem preservados no Docker, mas não são copiados automaticamente para o novo banco. Preserve o `.env` depois da primeira inicialização para manter as credenciais sincronizadas com o volume novo.
+
+Para acompanhar os logs continuamente, abra terminais separados:
 
 ```bash
 docker compose logs -f api
+```
+
+```bash
 docker compose logs -f worker
 ```
+
+Não considere a imagem construída como prova de que a API está pronta: a inicialização ainda precisa conseguir autenticar no PostgreSQL, aplicar migrations, executar o seed e abrir a porta HTTP.
+
+### Diagnóstico de falhas na inicialização
+
+**Erro Prisma `P1000` — falha de autenticação:** a API alcançou o PostgreSQL, mas usuário/senha não foram aceitos. Confira `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB` no `.env`. No Compose, o destino mostrado no log da API deve ser `postgres:5432`; a `DATABASE_URL` com `127.0.0.1:5433` é reservada para comandos executados no host.
+
+Esta versão usa o volume novo `greencode_pgdata_v3`, separado dos volumes `greencode_pgdata` e `greencode_pgdata_v2` usados por versões anteriores. Se você atualizou o projeto, o Compose deve criar esse volume novo sem apagar o antigo. Confirme `docker compose ps`: `postgres` precisa ficar `healthy`. O health check agora valida também uma autenticação real com a senha configurada. Se continuar `unhealthy`, confira se o `.env` está na raiz do projeto e se `POSTGRES_PASSWORD` não foi alterada depois da primeira inicialização de `greencode_pgdata_v3`. Não gere uma nova senha em cada execução e não use `docker compose down -v` como procedimento normal de inicialização.
+
+**Erro Prisma `P1001` ou conexão recusada:** confira se o container `postgres` está `healthy`, se a API está usando o host interno `postgres:5432` e se os containers estão na mesma rede Compose. `127.0.0.1` dentro de um container aponta para o próprio container, não para o host Windows nem para o serviço PostgreSQL.
+
+Para consultar os estados e logs sem exibir o conteúdo do `.env`:
+
+```bash
+docker compose ps -a
+docker compose logs --tail=120 postgres
+docker compose logs --tail=120 api
+```
+
+Não compartilhe a saída de `docker compose config` sem redigir credenciais: esse comando pode imprimir valores interpolados de variáveis de ambiente.
+
+### Executar usando banco PostgreSQL externo
+
+Se a avaliação deve usar um PostgreSQL diferente daquele criado pelo serviço `postgres` do Compose, execute a aplicação diretamente no host. Nesse modo, `DATABASE_URL` e `REDIS_URL` do `.env` são efetivamente utilizados. Configure `DATABASE_URL` com host, porta, usuário, senha e banco externos acessíveis pelo Windows/Linux host. O nome do banco deve ser o banco dedicado à avaliação; não utilize produção. Configure `REDIS_URL` para uma instância Redis 7 acessível pelo host.
+
+Com Node.js 24 instalado e PostgreSQL/Redis já disponíveis:
+
+```bash
+npm ci
+npm run prisma:validate
+npm run prisma:generate
+npm run db:deploy
+npm run db:seed:generated
+```
+
+O `db:seed:generated` utiliza o cliente gerado no passo anterior. Para executar o seed isoladamente, use `npm run db:seed`, que gera o Prisma Client antes de executar o seed.
+
+Abra dois terminais na raiz do projeto. No primeiro, inicie a API:
+
+```bash
+npm run dev
+```
+
+No segundo, inicie o worker:
+
+```bash
+npm run dev:worker
+```
+
+Nesse modo, não use `docker compose up` para iniciar a API/worker esperando que eles consumam a `DATABASE_URL` externa: o Compose atual monta as URLs internas apontando para seus próprios serviços `postgres` e `redis`. Para usar uma base externa a partir de containers, a configuração do Compose precisa ser adaptada explicitamente para receber uma URL de banco alcançável pela rede dos containers.
 
 ### Endereços
 
@@ -56,7 +242,8 @@ docker compose logs -f worker
 - Documento OpenAPI: `http://localhost:3000/docs/json`
 - Health check: `http://localhost:3000/health`
 
-O health check pode ser consultado com `curl --fail http://localhost:3000/health` ou `Invoke-RestMethod http://localhost:3000/health` no PowerShell. A resposta deve indicar `status: "ok"` e `service: "greencode-api"`.
+Depois de a API ficar `healthy`, consulte o health check com `curl --fail http://localhost:3000/health` ou `Invoke-RestMethod http://localhost:3000/health` no PowerShell. A resposta deve indicar `status: "ok"` e `service: "greencode-api"`. Só então abra o Swagger UI.
+
 
 ## 2. Entrar como administrador
 
@@ -331,16 +518,19 @@ A demonstração HTTP utiliza as rotas Fastify reais, mas controladores, reposit
 
 ### Integração com PostgreSQL e Redis
 
-A suíte de integração exige Node.js 24, PostgreSQL 17 e Redis 7. Configure `DATABASE_URL` para um banco dedicado com `test` no nome e `REDIS_URL` para Redis isolado. O teste de relatórios confirma também `current_database()` antes de criar dados e recusa bases que não pareçam ser de teste.
+A suíte de integração usa PostgreSQL 17 e Redis 7 dedicados. Os testes verificam se o banco selecionado é uma base de teste; não use o banco principal nem a base operacional do Compose.
 
-Com Docker Compose:
+**Caminho recomendado — infraestrutura de teste pelo Compose:**
 
 ```bash
+docker compose --profile tests config -q
 docker compose --profile tests up -d postgres-test redis-test
-docker compose --profile tests run --rm test-runner
+docker compose --profile tests run --build --rm test-runner
 ```
 
-O serviço `test-runner` aplica migrations e seed no banco `greencode_test` usando o cliente gerado na imagem e executa `npm run test:integration:dist`. Para rodar apenas integração a partir de um ambiente já preparado, use `npm run test:integration`; esse comando gera o cliente, compila o projeto e inicia os testes.
+O `test-runner` recebe as mesmas variáveis `POSTGRES_USER` e `POSTGRES_PASSWORD` e monta `DATABASE_URL` dentro do container apontando para `postgres-test:5432/greencode_test`; `REDIS_URL` aponta para `redis-test:6379`. Ele aplica migrations, executa o seed e roda `npm run test:integration:dist` dentro do container. As portas dos serviços de teste não são publicadas no host; por isso, não tente usar a `DATABASE_URL` do host para alcançar `postgres-test` diretamente.
+
+**Execução da suíte a partir do host:** use `npm run test:integration` somente quando `DATABASE_URL` apontar para um banco separado cujo nome contenha `test` e `REDIS_URL` apontar para um Redis de teste que esteja acessível pelo host. O comando compila o projeto e inicia a suíte; ele não cria nem isola automaticamente o banco externo. Antes, aplique migrations e seed nesse banco de teste. Nunca reutilize a URL do banco de avaliação principal se ela não for uma base descartável de testes.
 
 ### Pipeline completo local
 
@@ -371,4 +561,4 @@ docker compose down -v
 docker compose up --build -d
 ```
 
-`down -v` apaga os volumes de dados do projeto Compose. Só execute quando os dados existentes puderem ser descartados.
+`down -v` apaga os volumes nomeados deste projeto Compose, incluindo `greencode_pgdata_v3`, `greencode_test_pgdata_v3`, os dados do Redis e os arquivos de relatórios persistidos no volume compartilhado. O volume antigo `greencode_pgdata` também pode continuar presente no Docker se tiver sido criado por uma versão anterior, mas não é removido por esta configuração quando já não está referenciado. Só execute a remoção de volumes quando todos os dados que serão apagados puderem ser descartados. Esse comando não apaga um banco externo ao Compose.

@@ -98,10 +98,6 @@ Nunca aponte testes automatizados ao banco principal. A demonstração usa servi
 
 - [Relatório técnico AV3](docs/relatorio-tecnico-av3.md): arquitetura, decisões, métricas, limitações e escalabilidade.
 - [Guia do professor](docs/guia-de-testes-professor.md): inicialização, jornada de demonstração e comandos de validação.
-- [Decisões arquiteturais](docs/decisoes-arquiteturais.md): decisões, alternativas e histórico dos ADRs.
-- [Evidências de demonstração](docs/evidencias-testes-av3.md): preenchido pelo comando de demonstração após uma execução real.
+- [Decisões arquiteturais](docs/decisoes-arquiteturais.md): decisões arquiteturais do projeto.
 - [Inventário da entrega](docs/inventario.md): estrutura do pacote e conteúdo regenerado ou excluído.
 
-## Segurança operacional
-
-Não versione `.env`, não compartilhe API Keys ou JWTs e use credenciais próprias para avaliação. O segredo completo da API Key é exibido uma única vez durante sua criação; somente o hash é persistido.
